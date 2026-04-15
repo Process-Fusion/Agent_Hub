@@ -35,7 +35,7 @@ jobs:
       - name: Docker Compose — build and run tests
         run: |
           docker compose build app
-          docker compose run --rm app python -m pytest tests/ -q
+          docker compose run --rm app python -m pytest app/tests/ -q
 
       # CD
       - name: ACR Login
