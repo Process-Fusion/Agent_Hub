@@ -1,0 +1,18 @@
+# Core dependencies
+langchain-core>=0.2.0
+langchain-openai>=0.1.0
+langgraph>=0.1.0
+langsmith>=0.1.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# PDF processing (choose one or both)
+pymupdf>=1.23.0      # PyMuPDF - recommended, faster
+pdf2image>=1.16.0    # Alternative, requires poppler
+
+# Image processing
+Pillow>=10.0.0
+
+# Pydantic for state models
+pydantic>=2.0.0
