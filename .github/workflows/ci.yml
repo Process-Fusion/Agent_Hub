@@ -31,10 +31,24 @@ jobs:
           echo "LANGSMITH_ENDPOINT=${{ secrets.LANGSMITH_ENDPOINT }}" >> .env
 
       # Starts db + redis (healthchecks), builds app from Dockerfile, runs pytest (overrides CMD).
+      # CI
       - name: Docker Compose — build and run tests
         run: |
           docker compose build app
           docker compose run --rm app python -m pytest tests/ -q
+
+      # CD
+      - name: ACR Login
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}
+          username: ${{ secrets.AZURE_REGISTRY_USERNAME }}
+          password: ${{ secrets.AZURE_REGISTRY_PASSWORD }}
+
+      - name: Push App Image to Azure Container Registry
+        run: |
+          docker tag app:latest ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/app:latest
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/app:latest
 
       - name: Cleanup
         if: always()

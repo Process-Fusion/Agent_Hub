@@ -1,8 +1,8 @@
 FROM python:3.14-slim
 
-WORKDIR /root
+WORKDIR /app
 
-ENV PYTHONPATH=/root:/root/app
+ENV PYTHONPATH=/app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
