@@ -1,0 +1,41 @@
+# Build with Docker Compose (Postgres + Redis + app) and run pytest in the app container.
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-docker:
+    runs-on: ubuntu-latest
+    environment: dev
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create .env from secrets
+        run: |
+          echo "POSTGRES_CONNECTION_STRING=${{ secrets.POSTGRES_CONNECTION_STRING }}" > .env
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
+          echo "LANGSMITH_API_KEY=${{ secrets.LANGSMITH_API_KEY }}" >> .env
+          echo "LANGSMITH_PROJECT=${{ secrets.LANGSMITH_PROJECT }}" >> .env
+          echo "LANGSMITH_TRACING=${{ secrets.LANGSMITH_TRACING }}" >> .env
+          echo "LANGSMITH_ENDPOINT=${{ secrets.LANGSMITH_ENDPOINT }}" >> .env
+
+      # Starts db + redis (healthchecks), builds app from Dockerfile, runs pytest (overrides CMD).
+      - name: Docker Compose — build and run tests
+        run: |
+          docker compose build app
+          docker compose run --rm app python -m pytest tests/ -q
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
