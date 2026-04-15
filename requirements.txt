@@ -16,3 +16,6 @@ Pillow>=10.0.0
 
 # Pydantic for state models
 pydantic>=2.0.0
+
+# Pytest
+pytest>=7.0.0
