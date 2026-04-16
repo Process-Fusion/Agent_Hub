@@ -210,3 +210,5 @@ __marimo__/
 documents_need_classify/
 lookups/
 bill_images/
+
+.claude/

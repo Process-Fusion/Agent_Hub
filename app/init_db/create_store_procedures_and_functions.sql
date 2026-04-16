@@ -7,7 +7,7 @@
 CREATE OR REPLACE FUNCTION get_classification_types()
 RETURNS TABLE (
     TypeName    VARCHAR(100),
-    Description VARCHAR(500),
+    Description VARCHAR(500)
 )
 LANGUAGE plpgsql
 AS $$
@@ -15,7 +15,7 @@ BEGIN
     RETURN QUERY
     SELECT
         ct.TypeName,
-        ct.Description,
+        ct.Description
     FROM ClassificationTypes ct
     WHERE ct.IsActive = true
     ORDER BY ct.TypeName;

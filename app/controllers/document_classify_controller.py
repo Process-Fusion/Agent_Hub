@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from src.models.document_classify_request_model import DocumentClassifyRequest
-from src.models.document_classify_response.model import DocumentClassifyResponse
+from src.models.document_classify_response_model import DocumentClassifyResponse
 from src.models.add_classification_type_request_model import AddClassificationTypeRequest
 
 from src.services.postgres_db_service import get_all_classification_types, get_classification_keywords_by_type, add_classification_type
@@ -25,7 +25,7 @@ async def document_classify(request: DocumentClassifyRequest) -> DocumentClassif
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/classification-types")
+@router.get("/types")
 async def get_classification_types() -> list[str]:
   """
   Get all classification types.
@@ -35,7 +35,7 @@ async def get_classification_types() -> list[str]:
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/classification-keywords/{classification_type}")
+@router.get("/keywords/{classification_type}")
 async def get_classification_keywords(classification_type: str) -> list[str]:
   """
   Get all classification keywords for a given classification type.
@@ -45,7 +45,7 @@ async def get_classification_keywords(classification_type: str) -> list[str]:
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/classification-type")
+@router.post("/type")
 async def add_classification_type(request: AddClassificationTypeRequest) -> JSONResponse:
   """
   Add a new classification type.
