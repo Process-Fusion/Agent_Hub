@@ -1,15 +1,13 @@
 from langchain_core.tools import InjectedToolCallId, tool
-from typing import Annotated, Literal
+from typing import Annotated, Literal, List
 from pathlib import Path
 from datetime import date, datetime
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command, interrupt
-from src.services.postgres_db_service import get_all_classification_types
+from src.services.postgres_db_service import get_all_classification_types, insert_keywords, delete_classification_keywords
 import csv
 import json
-from src.DAL.classification_keywords_DA import insert_keywords, get_all_types, remove_keyword_by_value
-
-classification_types = get_all_classification_types()
+from src.models.classification_keyword_model import ClassificationKeywordModel
 
 @tool
 def create_classification_reasoning(
@@ -108,7 +106,13 @@ def request_human_confirmation(
     )
 
 @tool
-def classify_document(classification_type: str, confidence_score: float, reasoning: str, tool_call_id: Annotated[str, InjectedToolCallId]):
+def classify_document(
+    classification_type: str, 
+    confidence_score: float,
+    matched_keyword_ids: List[int],
+    reasoning: str, 
+    tool_call_id: Annotated[str, InjectedToolCallId]
+    ):
     """Classify a document into a classification type.
     
     Use this tool to classify a document into a classification type.
@@ -116,10 +120,11 @@ def classify_document(classification_type: str, confidence_score: float, reasoni
     Args:
         classification_type: The classification type to classify the document into.
         confidence_score: The confidence score of the classification (0-100).
+        matched_keyword_ids: The IDs of the keywords that matched the document.
         reasoning: The detailed reasoning for the classification.
     """
     # Check for classification type is valid
-    valid_types = get_all_types()
+    valid_types = ()
     if classification_type not in valid_types:
         return Command(
             update={
@@ -132,14 +137,15 @@ def classify_document(classification_type: str, confidence_score: float, reasoni
             "messages": [ToolMessage(content=f"Document classified as '{classification_type}' ({confidence_score}%) with reasoning: {reasoning}", tool_call_id=tool_call_id)],
             "classification_type": classification_type,
             "confidence_score": confidence_score,
-            "classification_reasoning": reasoning
+            "reasoning": reasoning,
+            "keyword_ids": matched_keyword_ids
         }
     )
 
 @tool
-def save_extracted_keywords(
+async def save_extracted_keywords(
     classification_type: str,
-    keywords: list[str],
+    keywords: list[ClassificationKeywordModel],
     tool_call_id: Annotated[str, InjectedToolCallId]
 ):
     """Save AI-extracted keywords for a classification type.
@@ -153,7 +159,7 @@ def save_extracted_keywords(
         keywords: List of keywords extracted by AI analysis (e.g., ["PO #", "Purchase Order", "Vendor ID"])
     """
     # Validate that the classification type exists
-    valid_types = get_all_types()
+    valid_types = await get_all_classification_types()
     if classification_type not in valid_types:
         return Command(
             update={
@@ -164,10 +170,7 @@ def save_extracted_keywords(
             }
         )
     
-    # Filter out empty keywords
-    keywords = [k.strip() for k in keywords if k and k.strip()]
-    
-    if not keywords:
+    if len(keywords) == 0:
         return Command(
             update={
                 "messages": [ToolMessage(
@@ -179,7 +182,7 @@ def save_extracted_keywords(
     
     try:
         # Insert keywords into database
-        inserted_ids = insert_keywords(classification_type, keywords)
+        inserted_ids = await insert_keywords(classification_type, keywords)
         
         return Command(
             update={
@@ -212,7 +215,7 @@ async def remove_keywords(keywords: list[str], classification_type: str, tool_ca
         classification_type: The classification type to remove the keywords from.
     """
     # Validate that the classification type exists
-    valid_types = get_all_types()
+    valid_types = await get_all_classification_types()
     if classification_type not in valid_types:
         return Command(
             update={
@@ -228,7 +231,7 @@ async def remove_keywords(keywords: list[str], classification_type: str, tool_ca
         )
     try:
         # Remove keywords from database
-        removed_ids = remove_keyword_by_value(classification_type, keywords)
+        removed_ids = delete_classification_keywords(classification_type, keywords)
     except Exception as e:
         return Command(
             update={

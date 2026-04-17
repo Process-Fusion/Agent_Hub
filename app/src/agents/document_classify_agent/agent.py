@@ -4,13 +4,18 @@ from src.agents.document_classify_agent.state import ClassificationAgentState
 from langgraph.graph import StateGraph
 from pathlib import Path
 from datetime import date
-from src.DAL.classification_keywords_DA import get_all_keywords, get_all_types
-from src.DAL.classification_trust_system_DA import (
-    get_trust_by_type,
-    increment_hit_count,
-    increment_miss_count,
-    is_trusted
+from src.enums.keyword_type_enum import KeywordTypeEnum
+from src.services.postgres_db_service import (
+   get_all_classification_keywords,
+   get_all_classification_types,
+   update_hit_count,
+   update_miss_count,
+   is_type_trusted,
+   get_trust_by_classification_type,
+   update_classification_keywords_hit,
+   update_classification_keywords_miss
 )
+
 from langgraph.types import interrupt
 from langchain_openai import ChatOpenAI
 from src.agents.document_classify_agent.tool import tool_list, save_extracted_keywords
@@ -26,30 +31,63 @@ class DocumentClassifyAgent(Agent):
     self.graph = self.create_graph()
     self.living_agent = self.graph.compile(checkpointer=AsyncPostgresSaver(conn = get_connection().__enter__()))
 
-  def build_system_prompt(self) -> str:
+  @staticmethod
+  def _format_keywords_for_prompt(keywords_by_type: dict) -> str:
+    """
+    Format keyword models into a readable block for the system prompt.
+
+    Output example:
+      Invoice:
+        [42] invoice (PRIMARY)
+        [43] Bill (SEMANTIC_ALIAS)
+        [44] Invoice No. (CONTEXTUAL)
+    """
+    if not keywords_by_type:
+      return ""
+
+    lines = []
+    for type_name, keywords in keywords_by_type.items():
+      lines.append(f"{type_name}:")
+      for kw in keywords:
+        # KeywordType may be an int (from DB) or already a string (from model)
+        ktype_raw = kw.KeywordType
+        if isinstance(ktype_raw, int):
+          ktype_label = KeywordTypeEnum(ktype_raw).name
+        else:
+          ktype_label = str(ktype_raw)
+        lines.append(f"  [{kw.KeywordID}] {kw.ClassificationKeyword} ({ktype_label})")
+      lines.append("")  # blank line between types
+
+    return "\n".join(lines).rstrip()
+
+  async def build_system_prompt(self) -> str:
     """Build the complete system prompt with all dynamic content."""
     system_prompt_path = Path(__file__).parent / "system_prompt.md"
 
     # Load template
     template = system_prompt_path.read_text(encoding="utf-8")
 
-    # Load classification keywords
-    classification_keywords = get_all_keywords()
-    classification_types = get_all_types()
-    # Format the prompt
+    # Load and format classification keywords
+    keywords_by_type = await get_all_classification_keywords()
+    if keywords_by_type:
+      classification_keywords = self._format_keywords_for_prompt(keywords_by_type)
+    else:
+      types = await get_all_classification_types()
+      classification_keywords = f"No keywords found. Known types: {', '.join(types)}"
+
     return template.format(
-        classification_keywords=classification_keywords if len(classification_keywords.keys()) > 0 else f"No keywords found, here are the types: {classification_types}",
+        classification_keywords=classification_keywords,
         current_date=date.today().isoformat()
     )
 
   async def arun(self, thread_id: str, document_name: str, page_images: list[bytes]) -> str:
     """Run the document classification agent."""
-
+    pass
 
   async def agent(self, state: ClassificationAgentState) -> ClassificationAgentState:
     """AI classification node - classifies document and stores result in state."""
-    # Build system prompt fresh each time (to include latest skill updates)
-    main_system_prompt = self.build_system_prompt()
+    # Build system prompt fresh each time (to include latest keyword updates)
+    main_system_prompt = await self.build_system_prompt()
     llm_with_tools = self.llm.bind_tools(tool_list)
     response = await llm_with_tools.ainvoke(input=[SystemMessage(content=main_system_prompt)] + state.messages)
     
@@ -96,7 +134,7 @@ class DocumentClassifyAgent(Agent):
     document_name = getattr(state, 'document_name', 'Unknown')
     
     # Get current trust info
-    trust_info = get_trust_by_type(classification_type)
+    trust_info = get_trust_by_classification_type(classification_type)
     hit_count = trust_info['hitcount'] if trust_info else 0
     miss_count = trust_info['misscount'] if trust_info else 0
     
@@ -110,7 +148,7 @@ class DocumentClassifyAgent(Agent):
             "hit_count": hit_count,
             "miss_count": miss_count,
             "net_score": hit_count - miss_count,
-            "is_trusted": is_trusted(classification_type, min_hits=3)
+            "is_trusted": is_type_trusted(classification_type, min_hits=3)
         },
         "question": f"Approve classification '{classification_type}' with confidence {confidence_score:.2f}?",
         "options": {
@@ -125,7 +163,9 @@ class DocumentClassifyAgent(Agent):
         
         if decision == "approve":
             # Human confirmed - increment hit count
-            increment_hit_count(classification_type)
+            update_hit_count(classification_type)
+            # Human confimed - increment keywords hit count
+            update_classification_keywords_hit(state.keyword_ids)
             return {
                 "human_approved": True,
                 "human_correction": None,
@@ -135,7 +175,9 @@ class DocumentClassifyAgent(Agent):
         
         elif decision == "correct":
             # Human rejected - increment miss count and get correction
-            increment_miss_count(classification_type)
+            update_miss_count(classification_type)
+            # Human rejected - increment keywords miss count
+            update_classification_keywords_miss(state.keyword_ids)
             correct_type = human_response.get("correct_classification", classification_type)
             
             return {
@@ -146,7 +188,8 @@ class DocumentClassifyAgent(Agent):
             }
     
     # Default: treat as rejection
-    increment_miss_count(classification_type)
+    update_miss_count(classification_type)
+    update_classification_keywords_miss(state.keyword_ids)
     return {
         "human_approved": False,
         "human_correction": None,
@@ -208,11 +251,12 @@ class DocumentClassifyAgent(Agent):
         return {"trust_routing": "classify"}
     
     # Check trust status
-    trusted = is_trusted(classification_type, min_hits=3)
+    trusted = is_type_trusted(classification_type, min_hits=3)
     
     if trusted and confidence_score >= 0.85:
         # Auto-classify - no human needed
-        increment_hit_count(classification_type)
+        update_hit_count(classification_type)
+        update_classification_keywords_hit(state.keyword_ids)
         return {"trust_routing": "auto_save"}
     else:
         # Not trusted or low confidence - need human confirmation

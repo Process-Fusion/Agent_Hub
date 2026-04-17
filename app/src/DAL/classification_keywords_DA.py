@@ -5,6 +5,10 @@ Simple keyword management without stages
 
 from typing import List, Dict, Any, Optional
 from src.core.db_connection import execute_query
+from src.models.classification_keyword_model import ClassificationKeywordModel
+from src.enums.keyword_source_enum import KeywordSourceEnum
+from src.enums.keyword_type_enum import KeywordTypeEnum
+from src.infrastructure.postgres_db import call_procedure, call_function_record
 
 
 def _get_type_id(type_name: str) -> Optional[int]:
@@ -29,58 +33,55 @@ def _ensure_type_exists(type_name: str) -> int:
     return result[0]["typeid"] if result else 0
 
 
-def get_all_keywords() -> Dict[str, List[str]]:
+async def get_all_keywords() -> Dict[str, List[ClassificationKeywordModel]]:
     """
     Get all active keywords grouped by classification type.
-    
+
     Returns:
-        Dictionary: {type_name: [keyword1, keyword2, ...]}
-        Example: {"Invoice": ["invoice", "balance", "payment"], "Purchase Order": ["PO", "order"]}
+        Dictionary: {type_name: [ClassificationKeywordModel, ...]}
+        Example: {"Invoice": [ClassificationKeywordModel(...), ...]}
     """
-    query = """
-        SELECT 
-            t.TypeName AS ClassificationType,
-            k.ClassificationKeywords
-        FROM ClassificationKeywords k
-        JOIN ClassificationTypes t ON k.TypeID = t.TypeID
-        WHERE k.IsActive = true AND t.IsActive = true
-        ORDER BY t.TypeName, k.KeywordID
-    """
-    result = execute_query(query)
-    
-    keywords_by_type: Dict[str, List[str]] = {}
-    for row in result:
-        type_name = row["classificationtype"]
-        keyword = row["classificationkeywords"]
-        if type_name not in keywords_by_type:
-            keywords_by_type[type_name] = []
-        keywords_by_type[type_name].append(keyword)
-    
-    return keywords_by_type
+    rows = await call_function_record("get_all_keywords")
+    result: Dict[str, List[ClassificationKeywordModel]] = {}
+    for row in rows:
+        type_name = row["typename"]
+        model = ClassificationKeywordModel(**{k: v for k, v in row.items() if k != "typename"})
+        result.setdefault(type_name, []).append(model)
+    return result
 
-
-def get_keywords_by_type(type_name: str) -> List[str]:
+async def get_keywords_by_type(type_name: str) -> List[ClassificationKeywordModel]:
     """
     Get all active keywords for a specific classification type.
-    
+
     Args:
         type_name: Classification type name (e.g., "Invoice")
-    
+
     Returns:
-        List of keywords for that type
+        List of ClassificationKeywordModel for that type.
     """
-    query = """
-        SELECT k.ClassificationKeywords
-        FROM ClassificationKeywords k
-        JOIN ClassificationTypes t ON k.TypeID = t.TypeID
-        WHERE t.TypeName = :type AND k.IsActive = true AND t.IsActive = true
-        ORDER BY k.KeywordID
+    rows = await call_function_record("get_keywords_by_type", type_name)
+    return [ClassificationKeywordModel(**row) for row in rows]
+
+async def get_k_keywords_by_type(type_name: str, k: int = 100) -> List[ClassificationKeywordModel]:
     """
-    result = execute_query(query, {"type": type_name})
-    return [row["classificationkeywords"] for row in result]
+    Get the top-K active keywords for a classification type, ranked by
+    signal strength (KeywordHitCount - KeywordMissCount DESC).
+
+    Used for selective keyword loading in the system prompt — avoids
+    dumping the entire keyword table into context as the agent learns.
+
+    Args:
+        type_name: Classification type name (e.g., "Invoice")
+        k: Maximum number of keywords to return (default 100)
+
+    Returns:
+        List of ClassificationKeywordModel, best-performing first.
+    """
+    rows = await call_function_record("get_k_keywords_by_type", type_name, k)
+    return [ClassificationKeywordModel(**row) for row in rows]
 
 
-def insert_keyword(type_name: str, keyword: str) -> int:
+async def insert_keywords(type_name: str, keywords: list[ClassificationKeywordModel]) -> None:
     """
     Insert a new keyword for a classification type.
     Creates the type if it doesn't exist.
@@ -93,50 +94,15 @@ def insert_keyword(type_name: str, keyword: str) -> int:
         New KeywordID
     """
     type_id = _ensure_type_exists(type_name)
-    
-    query = """
-        INSERT INTO ClassificationKeywords (TypeID, ClassificationKeywords, IsActive)
-        VALUES (:type_id, :keyword, true)
-        RETURNING KeywordID
-    """
-    result = execute_query(query, {
-        "type_id": type_id,
-        "keyword": keyword
-    })
-    return result[0]["keywordid"] if result else 0
-
-
-def insert_keywords(type_name: str, keywords: List[str]) -> List[int]:
-    """
-    Insert multiple keywords for a classification type.
-    
-    Args:
-        type_name: Classification type name
-        keywords: List of keywords to add
-    
-    Returns:
-        List of new KeywordIDs
-    """
-    type_id = _ensure_type_exists(type_name)
-    inserted_ids = []
-    
     for keyword in keywords:
-        query = """
-            INSERT INTO ClassificationKeywords (TypeID, ClassificationKeywords, IsActive)
-            VALUES (:type_id, :keyword, true)
-            RETURNING KeywordID
-        """
-        result = execute_query(query, {
-            "type_id": type_id,
-            "keyword": keyword
-        })
-        if result:
-            inserted_ids.append(result[0]["keywordid"])
-    
-    return inserted_ids
+        # Converting string KeywordType to the enum value
+        keyword_type_enum = KeywordTypeEnum[keyword.KeywordType]
+        # Converting string Source to the enum value
+        source_enum = KeywordSourceEnum[keyword.Source]
+        await call_procedure("insert_classification_keyword", type_id, keyword.ClassificationKeyword, keyword_type_enum, source_enum)
 
 
-def remove_keyword(keyword_id: int) -> int:
+async def remove_keyword(keyword_id: int) -> None:
     """
     Soft delete (deactivate) a keyword by ID.
     
@@ -146,15 +112,10 @@ def remove_keyword(keyword_id: int) -> int:
     Returns:
         Number of rows updated (0 or 1)
     """
-    query = """
-        UPDATE ClassificationKeywords
-        SET IsActive = false
-        WHERE KeywordID = :id
-    """
-    return execute_query(query, {"id": keyword_id}, fetch=False)
+    await call_procedure("delete_classification_keyword_by_id", keyword_id)
 
 
-def remove_keyword_by_value(type_name: str, keyword: str) -> int:
+async def remove_keyword_by_value(type_name: str, keyword: str) -> None:
     """
     Soft delete all keywords matching a specific value for a type.
     
@@ -165,24 +126,39 @@ def remove_keyword_by_value(type_name: str, keyword: str) -> int:
     Returns:
         Number of rows updated
     """
-    query = """
-        UPDATE ClassificationKeywords
-        SET IsActive = false
-        WHERE TypeID = (SELECT TypeID FROM ClassificationTypes WHERE TypeName = :type)
-          AND ClassificationKeywords = :keyword
-    """
-    return execute_query(query, {"type": type_name, "keyword": keyword}, fetch=False)
+    await call_procedure("delete_classification_keyword_by_value", type_name, keyword)
 
-
-def hard_delete_keyword(keyword_id: int) -> int:
+async def update_keyword_hit(keyword_id: int) -> None:
     """
-    Permanently delete a keyword by ID.
-    
+    Increment HitCount and update LastSeenDate for a keyword.
+    Call after a keyword contributed to a correct classification.
+
     Args:
-        keyword_id: The KeywordID to delete
-    
-    Returns:
-        Number of rows deleted
+        keyword_id: The KeywordID to update.
     """
-    query = "DELETE FROM ClassificationKeywords WHERE KeywordID = :id"
-    return execute_query(query, {"id": keyword_id}, fetch=False)
+    await call_procedure("update_keyword_hit", keyword_id)
+
+
+async def update_keyword_miss(keyword_id: int) -> None:
+    """
+    Increment MissCount and update LastSeenDate for a keyword.
+    Call after a keyword contributed to a wrong classification.
+
+    Args:
+        keyword_id: The KeywordID to update.
+    """
+    await call_procedure("update_keyword_miss", keyword_id)
+
+
+async def deactivate_stale_keywords() -> int:
+    """
+    Soft-deactivate keywords whose LastSeenDate is older than 2 months.
+    Skips SEED keywords that have never been seen (LastSeenDate IS NULL).
+    Intended to be called weekly by an Azure scheduler via the API.
+
+    Returns:
+        Number of keywords deactivated.
+    """
+    rows = await call_function_record("deactivate_stale_keywords")
+    return rows[0]["deactivate_stale_keywords"] if rows else 0
+
