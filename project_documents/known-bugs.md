@@ -54,12 +54,6 @@ The `/api/document-classify/classify` POST endpoint is stubbed with a TODO comme
 
 ---
 
-## BUG-004: Naming conflict in conftest.py for oddly-named model file
+## BUG-004: ~~Naming conflict in conftest.py for oddly-named model file~~ — RESOLVED
 
-**File:** `app/tests/conftest.py` (lines around 50–57)
-**Severity:** Low — test-only workaround
-
-**Description:**
-There is a Pydantic model file named `document_classify_response.model.py` (contains a dot before `py` in the middle of the filename). Python's import system cannot import a module whose name contains a dot. `conftest.py` works around this by manually loading the file.
-
-**Fix:** Rename the file to `document_classify_response_model.py` or `document_classify_response.py`.
+**Resolved:** File renamed to `document_classify_response_model.py`. `conftest.py` workaround removed. `test_models.py` import updated to `from src.models.document_classify_response_model import DocumentClassifyResponse`.

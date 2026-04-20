@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from src.models.document_classify_request_model import DocumentClassifyRequest
 from src.models.document_classify_response_model import DocumentClassifyResponse
 from src.models.add_classification_type_request_model import AddClassificationTypeRequest
-from src.models.document_human_response_model import DocumentHumanResponse
+from src.models.document_human_response_model import DocumentHumanResponseModel
 from typing import List
 
 from src.services.postgres_db_service import get_all_classification_types, get_classification_keywords_by_type, add_classification_type, deactivate_stale_classification_keywords
@@ -31,7 +31,7 @@ async def document_classify(request: DocumentClassifyRequest) -> DocumentClassif
     raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/humanresponse")
-async def document_human_response(human_responses: List[DocumentHumanResponse]) -> None:
+async def document_human_response(human_responses: List[DocumentHumanResponseModel]) -> None:
   """
   Resume the conversation to finish agent workflow that executed during /classify api call.
   The conversation session is stored in postgres db, and is stored with the same name as document name.
@@ -45,7 +45,7 @@ async def document_human_response(human_responses: List[DocumentHumanResponse]) 
     raise HTTPException(status_code=500, detail=str(e))
   
 @router.post("/humancomplaint")
-async def document_human_complaint(human_complaints: List[DocumentHumanResponse]) -> None:
+async def document_human_complaint(human_complaints: List[DocumentHumanResponseModel]) -> None:
   """
   This is the case that when the agent is trusted and confident with the classification, but the end user (SSG team)
   decided that the classification is wrong.

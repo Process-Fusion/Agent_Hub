@@ -1,30 +1,54 @@
 """
 Unit tests for src/DAL/classification_keywords_DA.py.
 
-All tests mock execute_query so no real database is required.
+Sync helpers (_get_type_id, _ensure_type_exists) mock execute_query.
+Async functions mock call_function_record / call_procedure via asyncio.run().
 """
 
-from unittest.mock import patch
+import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.DAL.classification_keywords_DA import (
     _ensure_type_exists,
     _get_type_id,
+    deactivate_stale_keywords,
     get_all_keywords,
+    get_k_keywords_by_type,
     get_keywords_by_type,
-    hard_delete_keyword,
-    insert_keyword,
     insert_keywords,
     remove_keyword,
     remove_keyword_by_value,
+    update_keyword_hit,
+    update_keyword_miss,
 )
+from src.models.classification_keyword_model import ClassificationKeywordModel
 
 _EQ = "src.DAL.classification_keywords_DA.execute_query"
+_CFR = "src.DAL.classification_keywords_DA.call_function_record"
+_CP = "src.DAL.classification_keywords_DA.call_procedure"
+
+
+def _kw(**overrides) -> ClassificationKeywordModel:
+    """Build a minimal ClassificationKeywordModel (uses aliases)."""
+    defaults = {"ClassificationKeywords": "invoice", "KeywordType": "PRIMARY", "Source": "SEED"}
+    return ClassificationKeywordModel(**{**defaults, **overrides})
+
+
+def _row(**overrides) -> dict:
+    """Build a minimal keyword DB row matching DB column / model alias names."""
+    base = {
+        "KeywordID": 1, "TypeID": 1, "ClassificationKeywords": "invoice",
+        "Stage": 1, "IsActive": True, "KeywordType": "PRIMARY", "Source": "SEED",
+        "KeywordHitCount": 0, "KeywordMissCount": 0,
+        "LastSeenDate": None, "CreatedDate": None, "ModifiedDate": None,
+    }
+    return {**base, **overrides}
 
 
 # ---------------------------------------------------------------------------
-# _get_type_id
+# _get_type_id  (sync)
 # ---------------------------------------------------------------------------
 class TestGetTypeId:
     def test_returns_id_when_type_found(self):
@@ -42,17 +66,16 @@ class TestGetTypeId:
 
 
 # ---------------------------------------------------------------------------
-# _ensure_type_exists
+# _ensure_type_exists  (sync)
 # ---------------------------------------------------------------------------
 class TestEnsureTypeExists:
     def test_returns_existing_type_id_without_inserting(self):
         with patch(_EQ, return_value=[{"typeid": 5}]) as mock:
             result = _ensure_type_exists("Invoice")
         assert result == 5
-        mock.assert_called_once()  # only the SELECT, no INSERT
+        mock.assert_called_once()
 
     def test_inserts_and_returns_new_id_when_type_missing(self):
-        # First call: SELECT returns nothing; second call: INSERT returns new id
         with patch(_EQ, side_effect=[[], [{"typeid": 99}]]) as mock:
             result = _ensure_type_exists("NewType")
         assert result == 99
@@ -60,193 +83,229 @@ class TestEnsureTypeExists:
 
     def test_returns_zero_when_insert_returns_nothing(self):
         with patch(_EQ, side_effect=[[], []]):
-            result = _ensure_type_exists("BadType")
-        assert result == 0
+            assert _ensure_type_exists("BadType") == 0
 
 
 # ---------------------------------------------------------------------------
-# get_all_keywords
+# get_all_keywords  (async)
 # ---------------------------------------------------------------------------
 class TestGetAllKeywords:
     def test_groups_keywords_by_type(self):
         rows = [
-            {"classificationtype": "Invoice", "classificationkeywords": "invoice"},
-            {"classificationtype": "Invoice", "classificationkeywords": "payment due"},
-            {"classificationtype": "Purchase Order", "classificationkeywords": "PO number"},
+            {"typename": "Invoice", **_row(ClassificationKeywords="invoice")},
+            {"typename": "Invoice", **_row(ClassificationKeywords="payment due")},
+            {"typename": "Purchase Order", **_row(ClassificationKeywords="PO number")},
         ]
-        with patch(_EQ, return_value=rows):
-            result = get_all_keywords()
-        assert result == {
-            "Invoice": ["invoice", "payment due"],
-            "Purchase Order": ["PO number"],
-        }
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=rows):
+                return await get_all_keywords()
+        result = asyncio.run(run())
+        assert set(result.keys()) == {"Invoice", "Purchase Order"}
+        assert len(result["Invoice"]) == 2
+        assert len(result["Purchase Order"]) == 1
 
-    def test_returns_empty_dict_when_no_keywords(self):
-        with patch(_EQ, return_value=[]):
-            assert get_all_keywords() == {}
+    def test_returns_classification_keyword_models(self):
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[{"typename": "Invoice", **_row()}]):
+                return await get_all_keywords()
+        result = asyncio.run(run())
+        assert isinstance(result["Invoice"][0], ClassificationKeywordModel)
+
+    def test_returns_empty_dict_when_no_rows(self):
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[]):
+                return await get_all_keywords()
+        assert asyncio.run(run()) == {}
 
     def test_preserves_insertion_order_within_type(self):
         rows = [
-            {"classificationtype": "Invoice", "classificationkeywords": "first"},
-            {"classificationtype": "Invoice", "classificationkeywords": "second"},
-            {"classificationtype": "Invoice", "classificationkeywords": "third"},
+            {"typename": "Invoice", **_row(ClassificationKeywords="first")},
+            {"typename": "Invoice", **_row(ClassificationKeywords="second")},
+            {"typename": "Invoice", **_row(ClassificationKeywords="third")},
         ]
-        with patch(_EQ, return_value=rows):
-            result = get_all_keywords()
-        assert result["Invoice"] == ["first", "second", "third"]
-
-    def test_multiple_types_independent(self):
-        rows = [
-            {"classificationtype": "A", "classificationkeywords": "kw_a"},
-            {"classificationtype": "B", "classificationkeywords": "kw_b"},
-        ]
-        with patch(_EQ, return_value=rows):
-            result = get_all_keywords()
-        assert len(result) == 2
-        assert result["A"] == ["kw_a"]
-        assert result["B"] == ["kw_b"]
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=rows):
+                return await get_all_keywords()
+        result = asyncio.run(run())
+        assert [m.ClassificationKeyword for m in result["Invoice"]] == ["first", "second", "third"]
 
 
 # ---------------------------------------------------------------------------
-# get_keywords_by_type
+# get_keywords_by_type  (async)
 # ---------------------------------------------------------------------------
 class TestGetKeywordsByType:
-    def test_returns_list_of_keywords(self):
-        rows = [
-            {"classificationkeywords": "invoice"},
-            {"classificationkeywords": "balance due"},
-            {"classificationkeywords": "payment terms"},
-        ]
-        with patch(_EQ, return_value=rows):
-            result = get_keywords_by_type("Invoice")
-        assert result == ["invoice", "balance due", "payment terms"]
+    def test_returns_list_of_models(self):
+        rows = [_row(ClassificationKeywords="invoice"), _row(ClassificationKeywords="balance due")]
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=rows):
+                return await get_keywords_by_type("Invoice")
+        result = asyncio.run(run())
+        assert len(result) == 2
+        assert all(isinstance(m, ClassificationKeywordModel) for m in result)
 
     def test_returns_empty_list_when_no_keywords(self):
-        with patch(_EQ, return_value=[]):
-            result = get_keywords_by_type("Invoice")
-        assert result == []
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[]):
+                return await get_keywords_by_type("Invoice")
+        assert asyncio.run(run()) == []
 
-    def test_passes_type_name_to_query(self):
-        with patch(_EQ, return_value=[]) as mock:
-            get_keywords_by_type("Referral")
+    def test_passes_type_name_to_function(self):
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[]) as mock:
+                await get_keywords_by_type("Referral")
+                return mock
+        mock = asyncio.run(run())
         assert "Referral" in str(mock.call_args)
 
 
 # ---------------------------------------------------------------------------
-# insert_keyword
+# get_k_keywords_by_type  (async)
 # ---------------------------------------------------------------------------
-class TestInsertKeyword:
-    def test_returns_new_keyword_id(self):
-        # First call: _ensure_type_exists SELECT; second: INSERT keyword
-        with patch(_EQ, side_effect=[[{"typeid": 1}], [{"keywordid": 10}]]):
-            result = insert_keyword("Invoice", "net 30")
-        assert result == 10
+class TestGetKKeywordsByType:
+    def test_returns_list_of_models(self):
+        rows = [_row(ClassificationKeywords=f"kw{i}") for i in range(3)]
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=rows):
+                return await get_k_keywords_by_type("Invoice", k=3)
+        result = asyncio.run(run())
+        assert len(result) == 3
+        assert all(isinstance(m, ClassificationKeywordModel) for m in result)
 
-    def test_returns_zero_when_insert_returns_nothing(self):
-        with patch(_EQ, side_effect=[[{"typeid": 1}], []]):
-            result = insert_keyword("Invoice", "net 30")
-        assert result == 0
+    def test_passes_k_to_function(self):
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[]) as mock:
+                await get_k_keywords_by_type("Invoice", k=5)
+                return mock
+        mock = asyncio.run(run())
+        assert 5 in mock.call_args.args
 
-    def test_passes_keyword_text_to_query(self):
-        with patch(_EQ, side_effect=[[{"typeid": 1}], [{"keywordid": 5}]]) as mock:
-            insert_keyword("Invoice", "balance due")
-        call_strings = " ".join(str(c) for c in mock.call_args_list)
-        assert "balance due" in call_strings
+    def test_returns_empty_list_when_no_keywords(self):
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[]):
+                return await get_k_keywords_by_type("Invoice", k=10)
+        assert asyncio.run(run()) == []
 
 
 # ---------------------------------------------------------------------------
-# insert_keywords
+# insert_keywords  (async)
 # ---------------------------------------------------------------------------
 class TestInsertKeywords:
-    def test_returns_list_of_ids(self):
-        with patch(
-            _EQ,
-            side_effect=[
-                [{"typeid": 1}],       # _ensure_type_exists
-                [{"keywordid": 10}],   # first keyword
-                [{"keywordid": 11}],   # second keyword
-            ],
-        ):
-            result = insert_keywords("Invoice", ["net 30", "balance"])
-        assert result == [10, 11]
+    def test_calls_procedure_for_each_keyword(self):
+        keywords = [_kw(ClassificationKeywords="kw1"), _kw(ClassificationKeywords="kw2")]
+        async def run():
+            with patch(_EQ, return_value=[{"typeid": 1}]):
+                with patch(_CP, new_callable=AsyncMock) as mock_cp:
+                    await insert_keywords("Invoice", keywords)
+                    return mock_cp
+        mock_cp = asyncio.run(run())
+        assert mock_cp.call_count == 2
 
-    def test_returns_empty_list_for_empty_input(self):
-        # _ensure_type_exists is still called for the type lookup
-        with patch(_EQ, return_value=[{"typeid": 1}]):
-            result = insert_keywords("Invoice", [])
-        assert result == []
+    def test_no_procedure_calls_for_empty_list(self):
+        async def run():
+            with patch(_EQ, return_value=[{"typeid": 1}]):
+                with patch(_CP, new_callable=AsyncMock) as mock_cp:
+                    await insert_keywords("Invoice", [])
+                    return mock_cp
+        asyncio.run(run()).assert_not_called()
 
-    def test_skips_failed_inserts(self):
-        with patch(
-            _EQ,
-            side_effect=[
-                [{"typeid": 1}],
-                [{"keywordid": 7}],
-                [],                 # second insert fails
-                [{"keywordid": 9}],
-            ],
-        ):
-            result = insert_keywords("Invoice", ["kw1", "kw2", "kw3"])
-        assert result == [7, 9]
+    def test_returns_none(self):
+        async def run():
+            with patch(_EQ, return_value=[{"typeid": 1}]):
+                with patch(_CP, new_callable=AsyncMock):
+                    return await insert_keywords("Invoice", [_kw()])
+        assert asyncio.run(run()) is None
 
 
 # ---------------------------------------------------------------------------
-# remove_keyword (soft delete by ID)
+# remove_keyword  (async)
 # ---------------------------------------------------------------------------
 class TestRemoveKeyword:
-    def test_returns_row_count_on_success(self):
-        with patch(_EQ, return_value=1) as mock:
-            result = remove_keyword(42)
-        assert result == 1
-        mock.assert_called_once()
+    def test_calls_procedure_with_keyword_id(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock) as mock:
+                await remove_keyword(42)
+                return mock
+        mock = asyncio.run(run())
+        assert 42 in mock.call_args.args
 
-    def test_passes_keyword_id_to_query(self):
-        with patch(_EQ, return_value=1) as mock:
-            remove_keyword(42)
-        assert "42" in str(mock.call_args)
-
-    def test_returns_zero_when_id_not_found(self):
-        with patch(_EQ, return_value=0):
-            assert remove_keyword(9999) == 0
+    def test_returns_none(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock):
+                return await remove_keyword(42)
+        assert asyncio.run(run()) is None
 
 
 # ---------------------------------------------------------------------------
-# remove_keyword_by_value (soft delete by type + keyword text)
+# remove_keyword_by_value  (async)
 # ---------------------------------------------------------------------------
 class TestRemoveKeywordByValue:
-    def test_returns_row_count_on_success(self):
-        with patch(_EQ, return_value=2) as mock:
-            result = remove_keyword_by_value("Invoice", "net 30")
-        assert result == 2
-        mock.assert_called_once()
-
-    def test_passes_type_and_keyword_to_query(self):
-        with patch(_EQ, return_value=1) as mock:
-            remove_keyword_by_value("Purchase Order", "PO number")
+    def test_calls_procedure_with_type_and_keyword(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock) as mock:
+                await remove_keyword_by_value("Invoice", "net 30")
+                return mock
+        mock = asyncio.run(run())
         call_str = str(mock.call_args)
-        assert "Purchase Order" in call_str
-        assert "PO number" in call_str
+        assert "Invoice" in call_str
+        assert "net 30" in call_str
 
-    def test_returns_zero_when_not_found(self):
-        with patch(_EQ, return_value=0):
-            assert remove_keyword_by_value("Invoice", "ghost keyword") == 0
+    def test_returns_none(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock):
+                return await remove_keyword_by_value("Invoice", "net 30")
+        assert asyncio.run(run()) is None
 
 
 # ---------------------------------------------------------------------------
-# hard_delete_keyword
+# update_keyword_hit  (async)
 # ---------------------------------------------------------------------------
-class TestHardDeleteKeyword:
-    def test_returns_row_count_on_success(self):
-        with patch(_EQ, return_value=1) as mock:
-            result = hard_delete_keyword(42)
-        assert result == 1
-        mock.assert_called_once()
+class TestUpdateKeywordHit:
+    def test_calls_procedure_with_keyword_id(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock) as mock:
+                await update_keyword_hit(7)
+                return mock
+        mock = asyncio.run(run())
+        assert 7 in mock.call_args.args
 
-    def test_passes_keyword_id_to_query(self):
-        with patch(_EQ, return_value=1) as mock:
-            hard_delete_keyword(99)
-        assert "99" in str(mock.call_args)
+    def test_returns_none(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock):
+                return await update_keyword_hit(7)
+        assert asyncio.run(run()) is None
 
-    def test_returns_zero_when_id_not_found(self):
-        with patch(_EQ, return_value=0):
-            assert hard_delete_keyword(9999) == 0
+
+# ---------------------------------------------------------------------------
+# update_keyword_miss  (async)
+# ---------------------------------------------------------------------------
+class TestUpdateKeywordMiss:
+    def test_calls_procedure_with_keyword_id(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock) as mock:
+                await update_keyword_miss(7)
+                return mock
+        mock = asyncio.run(run())
+        assert 7 in mock.call_args.args
+
+    def test_returns_none(self):
+        async def run():
+            with patch(_CP, new_callable=AsyncMock):
+                return await update_keyword_miss(7)
+        assert asyncio.run(run()) is None
+
+
+# ---------------------------------------------------------------------------
+# deactivate_stale_keywords  (async)
+# ---------------------------------------------------------------------------
+class TestDeactivateStaleKeywords:
+    def test_returns_count_of_deactivated_keywords(self):
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[{"deactivate_stale_keywords": 5}]):
+                return await deactivate_stale_keywords()
+        assert asyncio.run(run()) == 5
+
+    def test_returns_zero_when_no_stale_keywords(self):
+        async def run():
+            with patch(_CFR, new_callable=AsyncMock, return_value=[]):
+                return await deactivate_stale_keywords()
+        assert asyncio.run(run()) == 0

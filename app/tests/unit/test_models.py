@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.models.document_classify_request_model import DocumentClassifyRequest
-from src.models.document_classify_response.model import DocumentClassifyResponse
+from src.models.document_classify_response_model import DocumentClassifyResponse
 from src.models.add_classification_type_request_model import AddClassificationTypeRequest
 
 

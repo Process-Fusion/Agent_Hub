@@ -17,7 +17,7 @@ Last updated: 2026-04-16
 Key setup:
 - Adds `app/` to `sys.path` so imports resolve correctly
 - Pre-sets `POSTGRES_CONNECTION_STRING` environment variable
-- Manually loads the oddly-named `document_classify_response.model.py` file (see known-bugs.md BUG-004)
+- Sets up `sys.path` and env vars only — the oddly-named model workaround has been removed (BUG-004 resolved)
 
 ---
 

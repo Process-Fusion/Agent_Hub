@@ -2,7 +2,7 @@
 services:
   app:
     build: .
-    image: app:latest
+    image: agent-hub:latest
     ports:
       - "8000:8000"
     env_file: .env

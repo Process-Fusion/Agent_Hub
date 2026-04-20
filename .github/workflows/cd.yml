@@ -1,0 +1,53 @@
+# Build app image and deploy to Azure Container App.
+# Runs only after the CI workflow completes successfully on main.
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: ACR Login
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}
+          username: ${{ secrets.AZURE_REGISTRY_USERNAME }}
+          password: ${{ secrets.AZURE_REGISTRY_PASSWORD }}
+
+      - name: Build App Image
+        run: docker compose build app
+
+      - name: Push App Image to Azure Container Registry
+        run: |
+          docker tag app:latest ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/app:latest
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/app:latest
+
+      # - name: Azure Login
+      #   uses: azure/login@v2
+      #   with:
+      #     creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # - name: Deploy to Container App
+      #   run: |
+      #     az containerapp update \
+      #       --name ${{ secrets.AZURE_CONTAINER_APP_NAME }} \
+      #       --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+      #       --image ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/app:latest
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
