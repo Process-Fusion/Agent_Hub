@@ -1,4 +1,3 @@
-from src.infrastructure.postgres_db import get_connection, call_function_record
 from src.DAL.classification_keywords_DA import (
   get_keywords_by_type, insert_keywords, 
   remove_keyword_by_value, 

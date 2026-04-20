@@ -4,32 +4,31 @@ Simple keyword management without stages
 """
 
 from typing import List, Dict, Any, Optional
-from src.core.db_connection import execute_query
 from src.models.classification_keyword_model import ClassificationKeywordModel
 from src.enums.keyword_source_enum import KeywordSourceEnum
 from src.enums.keyword_type_enum import KeywordTypeEnum
-from src.infrastructure.postgres_db import call_procedure, call_function_record
+from src.infrastructure.postgres_db import call_procedure, call_function_record, select_query
 
 
-def _get_type_id(type_name: str) -> Optional[int]:
+async def _get_type_id(type_name: str) -> Optional[int]:
     """Get TypeID from TypeName. Returns None if not found."""
-    query = "SELECT TypeID FROM ClassificationTypes WHERE TypeName = :name AND IsActive = true"
-    result = execute_query(query, {"name": type_name})
+    query = "SELECT TypeID FROM ClassificationTypes WHERE TypeName = $1 AND IsActive = true"
+    result = await select_query(query, type_name)
     return result[0]["typeid"] if result else None
 
 
-def _ensure_type_exists(type_name: str) -> int:
+async def _ensure_type_exists(type_name: str) -> int:
     """Get or create TypeID for a type name."""
-    type_id = _get_type_id(type_name)
+    type_id = await _get_type_id(type_name)
     if type_id:
         return type_id
-    
+
     query = """
         INSERT INTO ClassificationTypes (TypeName, IsActive)
-        VALUES (:name, true)
+        VALUES ($1, true)
         RETURNING TypeID
     """
-    result = execute_query(query, {"name": type_name})
+    result = await select_query(query, type_name)
     return result[0]["typeid"] if result else 0
 
 
@@ -93,7 +92,7 @@ async def insert_keywords(type_name: str, keywords: list[ClassificationKeywordMo
     Returns:
         New KeywordID
     """
-    type_id = _ensure_type_exists(type_name)
+    type_id = await _ensure_type_exists(type_name)
     for keyword in keywords:
         # Converting string KeywordType to the enum value
         keyword_type_enum = KeywordTypeEnum[keyword.KeywordType]

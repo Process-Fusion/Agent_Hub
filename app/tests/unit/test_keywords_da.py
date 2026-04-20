@@ -25,7 +25,7 @@ from src.DAL.classification_keywords_DA import (
 )
 from src.models.classification_keyword_model import ClassificationKeywordModel
 
-_EQ = "src.DAL.classification_keywords_DA.execute_query"
+_SQ = "src.DAL.classification_keywords_DA.select_query"
 _CFR = "src.DAL.classification_keywords_DA.call_function_record"
 _CP = "src.DAL.classification_keywords_DA.call_procedure"
 
@@ -48,42 +48,57 @@ def _row(**overrides) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# _get_type_id  (sync)
+# _get_type_id  (async)
 # ---------------------------------------------------------------------------
 class TestGetTypeId:
     def test_returns_id_when_type_found(self):
-        with patch(_EQ, return_value=[{"typeid": 42}]):
-            assert _get_type_id("Invoice") == 42
+        async def run():
+            with patch(_SQ, new_callable=AsyncMock, return_value=[{"typeid": 42}]):
+                return await _get_type_id("Invoice")
+        assert asyncio.run(run()) == 42
 
     def test_returns_none_when_type_not_found(self):
-        with patch(_EQ, return_value=[]):
-            assert _get_type_id("Unknown") is None
+        async def run():
+            with patch(_SQ, new_callable=AsyncMock, return_value=[]):
+                return await _get_type_id("Unknown")
+        assert asyncio.run(run()) is None
 
     def test_passes_type_name_to_query(self):
-        with patch(_EQ, return_value=[{"typeid": 1}]) as mock:
-            _get_type_id("Purchase Order")
+        async def run():
+            with patch(_SQ, new_callable=AsyncMock, return_value=[{"typeid": 1}]) as mock:
+                await _get_type_id("Purchase Order")
+                return mock
+        mock = asyncio.run(run())
         assert "Purchase Order" in str(mock.call_args)
 
 
 # ---------------------------------------------------------------------------
-# _ensure_type_exists  (sync)
+# _ensure_type_exists  (async)
 # ---------------------------------------------------------------------------
 class TestEnsureTypeExists:
     def test_returns_existing_type_id_without_inserting(self):
-        with patch(_EQ, return_value=[{"typeid": 5}]) as mock:
-            result = _ensure_type_exists("Invoice")
+        async def run():
+            with patch(_SQ, new_callable=AsyncMock, return_value=[{"typeid": 5}]) as mock:
+                result = await _ensure_type_exists("Invoice")
+                return result, mock
+        result, mock = asyncio.run(run())
         assert result == 5
         mock.assert_called_once()
 
     def test_inserts_and_returns_new_id_when_type_missing(self):
-        with patch(_EQ, side_effect=[[], [{"typeid": 99}]]) as mock:
-            result = _ensure_type_exists("NewType")
+        async def run():
+            with patch(_SQ, new_callable=AsyncMock, side_effect=[[], [{"typeid": 99}]]) as mock:
+                result = await _ensure_type_exists("NewType")
+                return result, mock
+        result, mock = asyncio.run(run())
         assert result == 99
         assert mock.call_count == 2
 
     def test_returns_zero_when_insert_returns_nothing(self):
-        with patch(_EQ, side_effect=[[], []]):
-            assert _ensure_type_exists("BadType") == 0
+        async def run():
+            with patch(_SQ, new_callable=AsyncMock, side_effect=[[], []]):
+                return await _ensure_type_exists("BadType")
+        assert asyncio.run(run()) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +208,7 @@ class TestInsertKeywords:
     def test_calls_procedure_for_each_keyword(self):
         keywords = [_kw(ClassificationKeywords="kw1"), _kw(ClassificationKeywords="kw2")]
         async def run():
-            with patch(_EQ, return_value=[{"typeid": 1}]):
+            with patch(_SQ, new_callable=AsyncMock, return_value=[{"typeid": 1}]):
                 with patch(_CP, new_callable=AsyncMock) as mock_cp:
                     await insert_keywords("Invoice", keywords)
                     return mock_cp
@@ -202,7 +217,7 @@ class TestInsertKeywords:
 
     def test_no_procedure_calls_for_empty_list(self):
         async def run():
-            with patch(_EQ, return_value=[{"typeid": 1}]):
+            with patch(_SQ, new_callable=AsyncMock, return_value=[{"typeid": 1}]):
                 with patch(_CP, new_callable=AsyncMock) as mock_cp:
                     await insert_keywords("Invoice", [])
                     return mock_cp
@@ -210,7 +225,7 @@ class TestInsertKeywords:
 
     def test_returns_none(self):
         async def run():
-            with patch(_EQ, return_value=[{"typeid": 1}]):
+            with patch(_SQ, new_callable=AsyncMock, return_value=[{"typeid": 1}]):
                 with patch(_CP, new_callable=AsyncMock):
                     return await insert_keywords("Invoice", [_kw()])
         assert asyncio.run(run()) is None
