@@ -33,8 +33,8 @@ jobs:
 
       - name: Push App Image to Azure Container Registry
         run: |
-          docker tag app:latest ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/app:latest
-          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/app:latest
+          docker tag agent-hub:latest ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/agent-hub:latest
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY_URL }}/agent-hub:latest
 
       # - name: Azure Login
       #   uses: azure/login@v2
@@ -50,4 +50,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: docker image prune -f
