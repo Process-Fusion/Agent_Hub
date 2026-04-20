@@ -29,7 +29,7 @@ jobs:
           password: ${{ secrets.AZURE_REGISTRY_PASSWORD }}
 
       - name: Build App Image
-        run: docker compose build app
+        run: docker build -t agent-hub:latest .
 
       - name: Push App Image to Azure Container Registry
         run: |
