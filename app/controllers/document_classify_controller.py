@@ -1,6 +1,9 @@
 # HTTP routes — health and tool API (Twilio/ElevenLabs call these from their dashboards)
+import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 from src.models.document_classify_request_model import DocumentClassifyRequest
 from src.models.document_classify_response_model import DocumentClassifyResponse
 from src.models.add_classification_type_request_model import AddClassificationTypeRequest
@@ -28,6 +31,7 @@ async def document_classify(request: DocumentClassifyRequest) -> DocumentClassif
       reasoning="This is a junk document."
     )
   except Exception as e:
+    logger.exception(e)
     raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/humanresponse")
@@ -42,6 +46,7 @@ async def document_human_response(human_responses: List[DocumentHumanResponseMod
       pass
       #await resume_conversation(human_response.document_name, human_response)
   except Exception as e:
+    logger.exception(e)
     raise HTTPException(status_code=500, detail=str(e))
   
 @router.post("/humancomplaint")
@@ -56,6 +61,7 @@ async def document_human_complaint(human_complaints: List[DocumentHumanResponseM
       pass
       #await resume_conversation(human_complaint.document_name, human_complaint)
   except Exception as e:
+    logger.exception(e)
     raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/types")
@@ -66,6 +72,7 @@ async def get_classification_types() -> list[str]:
   try:
     return await get_all_classification_types()
   except Exception as e:
+    logger.exception(e)
     raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/keywords/{classification_type}")
@@ -76,6 +83,7 @@ async def get_classification_keywords(classification_type: str) -> list[str]:
   try:
     return await get_classification_keywords_by_type(classification_type)
   except Exception as e:
+    logger.exception(e)
     raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/type")
@@ -87,6 +95,7 @@ async def add_classification_type(request: AddClassificationTypeRequest) -> JSON
     await add_classification_type(request.classification_type, request.description)
     return JSONResponse(status_code=200, content={"message": "Classification type added successfully"})
   except Exception as e:
+    logger.exception(e)
     raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/keywords/deactivate")
@@ -96,4 +105,5 @@ async def deactivate_keywords() -> JSONResponse:
     await deactivate_stale_classification_keywords()
     return JSONResponse(status_code=200, content={"message": "Unused Keywords deactivated successfully"})
   except Exception as e:
+    logger.exception(e)
     raise HTTPException(status_code=500, detail=str(e))

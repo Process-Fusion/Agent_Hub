@@ -1,10 +1,8 @@
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Any
 from src.core.env_config import EnvConfig
 import asyncpg
-from typing import Any
 
-# Singleton pattern design
 _pool: asyncpg.Pool | None = None
 
 async def init_pool() -> asyncpg.Pool:
@@ -36,24 +34,33 @@ async def get_connection() -> AsyncGenerator[asyncpg.Connection, None]:
   async with pool.acquire() as connection:
     yield connection
 
+def _placeholders(*args: Any) -> str:
+  return ", ".join(f"${i + 1}" for i in range(len(args)))
+
 async def select_query(query: str, *args: Any) -> list[dict[str, Any]]:
-  """Execute a SELECT query and return the results."""
+  """Execute a raw SELECT query and return rows as dicts."""
   async with get_connection() as connection:
     rows = await connection.fetch(query, *args)
     return [dict(row) for row in rows]
 
 async def call_procedure(procedure: str, *args: Any) -> None:
-  """Call a stored procedure and return no value."""
+  """Call a stored procedure by name, or execute a raw SQL statement."""
+  if " " in procedure:
+    query = procedure  # raw SQL (e.g. UPDATE ...)
+  else:
+    query = f"CALL {procedure}({_placeholders(*args)})"
   async with get_connection() as connection:
-    await connection.execute(procedure, *args)
+    await connection.execute(query, *args)
 
 async def call_function_scalar(function: str, *args: Any) -> Any:
-  """Call a scalar function and return the result."""
+  """Call a scalar PostgreSQL function and return the single value."""
+  query = f"SELECT {function}({_placeholders(*args)})"
   async with get_connection() as connection:
-    return await connection.fetchval(function, *args)
+    return await connection.fetchval(query, *args)
 
-async def call_function_record(function: str, *args: Any) -> dict[str, Any]:
-  """Call a record function and return the result."""
+async def call_function_record(function: str, *args: Any) -> list[dict[str, Any]]:
+  """Call a set-returning PostgreSQL function and return rows as dicts."""
+  query = f"SELECT * FROM {function}({_placeholders(*args)})"
   async with get_connection() as connection:
-    rows = await connection.fetch(function, *args)
+    rows = await connection.fetch(query, *args)
     return [dict(row) for row in rows]
