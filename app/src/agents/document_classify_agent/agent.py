@@ -1,6 +1,7 @@
 from langgraph.types import Command
 from src.agents.agent_factory import Agent
 from src.agents.document_classify_agent.state import ClassificationAgentState
+from src.models.document_human_response_model import DocumentHumanResponseModel
 from langgraph.graph import StateGraph
 from pathlib import Path
 from datetime import date
@@ -16,10 +17,11 @@ from src.services.postgres_db_service import (
    update_classification_keywords_miss
 )
 
+import base64
 from langgraph.types import interrupt
 from langchain_openai import ChatOpenAI
 from src.agents.document_classify_agent.tool import tool_list, save_extracted_keywords
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 from langgraph.graph import END, START
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -80,9 +82,69 @@ class DocumentClassifyAgent(Agent):
         current_date=date.today().isoformat()
     )
 
-  async def arun(self, thread_id: str, document_name: str, page_images: list[bytes]) -> str:
+  async def arun(self, document_name: str, page_images: list[bytes]) -> str:
     """Run the document classification agent."""
-    pass
+    thread_id = f"{document_name}"
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    content = [{"type": "text", "text": f"Document name: {document_name}"}]
+    for img in page_images:
+      content.append({
+        "type": "image_url",
+        "image_url": {"url": f"data:image/png;base64,{base64.b64encode(img).decode()}"}
+      })
+
+    result = await self.living_agent.ainvoke(
+      {
+        "messages": [HumanMessage(content=content)],
+        "document_name": document_name
+      },
+      config=config
+    )
+
+    return {
+       "classification_type": result["classification_type"],
+       "confidence_score": result["confidence_score"],
+       "reasoning": result["reasoning"]
+    }
+  
+  async def acomplaint(self, document_name: str, human_response: DocumentHumanResponseModel) -> None:
+    """Complaint from human (Human in the loop)
+    Main target of complaint is to update the agent knowledge
+    """
+    thread_id = f"{document_name}"
+    config = {"configurable": {"thread_id": thread_id}}
+    # Update Trust System
+    update_miss_count(human_response.agent_classification_type)
+    # Update the agent knowledge
+    await self.living_agent.ainvoke(
+      Command(
+        update={
+          "human_approved": False,
+          "human_correction": human_response.human_correction,
+          "classification_type": human_response.agent_classification_type,
+        },
+        goto="keyword_extraction"
+      ),
+      config=config
+    )
+
+  async def aresume(self, document_name: str, human_response: DocumentHumanResponseModel) -> None:
+    """
+    Resume from interruption (Human in the loop)
+    Main target of resume is to update the agent knowledge
+    """
+    thread_id = f"{document_name}"
+    config = {"configurable": {"thread_id": thread_id}}
+    decision = "approve" if human_response.decision else "correct"
+    await self.living_agent.ainvoke(
+      Command(resume={
+         "decision": decision,
+         "document_name": document_name,
+         "correct_classification": human_response.final_classification_type
+      }),
+      config=config
+    )
 
   async def agent(self, state: ClassificationAgentState) -> ClassificationAgentState:
     """AI classification node - classifies document and stores result in state."""
@@ -101,10 +163,10 @@ class DocumentClassifyAgent(Agent):
         return "tool"
     
     # Check current skill mode
-    active_skill = getattr(state, 'active_skill', None)
+    next_step = getattr(state, 'next_step', None)
     
     # If in keyword extraction mode, route to extraction handler
-    if active_skill == "keyword_extraction":
+    if next_step == "keyword_extraction":
         return "keyword_extraction"
     
     # Check if we have a classification result
@@ -122,11 +184,6 @@ class DocumentClassifyAgent(Agent):
         return response
     return Command(update=response)
 
-  # TODO: Implement human confirmation node
-  # Find a way for the agent to communicate with the human (Email?, Team chat?)
-  # When waiting for human confirmation, the agent should not continue processing the document
-  # Postgres Checkpoint: Insert the conversation history into the database using thread_id and when receive an response from human
-  # -> Retrieve the conversation history and continue the graph execution
   async def human_confirmation(self, state: ClassificationAgentState) -> ClassificationAgentState:
     """Human-in-the-loop node - pause and wait for user confirmation."""
     classification_type = getattr(state, 'classification_type', 'Unknown')
@@ -169,8 +226,7 @@ class DocumentClassifyAgent(Agent):
             return {
                 "human_approved": True,
                 "human_correction": None,
-                "final_classification": classification_type,
-                "active_skill": None
+                "next_step": None
             }
         
         elif decision == "correct":
@@ -183,8 +239,7 @@ class DocumentClassifyAgent(Agent):
             return {
                 "human_approved": False,
                 "human_correction": correct_type,
-                "final_classification": correct_type,
-                "active_skill": "keyword_extraction"  # Switch to keyword extraction mode
+                "next_step": "keyword_extraction"  # Switch to keyword extraction mode
             }
     
     # Default: treat as rejection
@@ -193,8 +248,7 @@ class DocumentClassifyAgent(Agent):
     return {
         "human_approved": False,
         "human_correction": None,
-        "final_classification": classification_type,
-        "active_skill": None
+        "next_step": None
     }
 
   async def keyword_extraction_agent(self,state: ClassificationAgentState) -> ClassificationAgentState:
@@ -207,7 +261,7 @@ class DocumentClassifyAgent(Agent):
     
     if not human_correction:
         # No correction to learn from
-        return {"active_skill": None}
+        return {"next_step": None}
     
     # Build extraction prompt
     extraction_prompt = f"""You previously classified this document incorrectly. 
@@ -239,7 +293,7 @@ class DocumentClassifyAgent(Agent):
 
     return {
         "messages": [response],
-        "active_skill": None  # Reset to normal mode
+        "next_step": None  # Reset to normal mode
     }
 
   async def check_trust_node(self, state: ClassificationAgentState) -> ClassificationAgentState:
@@ -261,37 +315,10 @@ class DocumentClassifyAgent(Agent):
     else:
         # Not trusted or low confidence - need human confirmation
         return {"trust_routing": "human_confirm"}
+  
+  async def delete_thread_node(self, state: ClassificationAgentState) -> None:
+    await self.living_agent.checkpointer.adelete_thread(state.document_name)
 
-  async def route_from_trust_check(self, state: ClassificationAgentState) -> str:
-    """Route based on trust check result from state."""
-    trust_routing = getattr(state, 'trust_routing', None)
-    if trust_routing:
-        return trust_routing
-    else:
-        return "human_confirm"
-
-  async def handle_result(self, state: ClassificationAgentState) -> ClassificationAgentState:
-    """Handle the result after human confirmation, auto-classification, or keyword extraction."""
-    human_approved = getattr(state, 'human_approved', False)
-    human_correction = getattr(state, 'human_correction', None)
-    extracted_keywords = getattr(state, 'extracted_keywords', None)
-    
-    # If we just finished keyword extraction, we're done
-    if extracted_keywords and human_correction:
-        return {
-            "status": "completed", 
-            "approved": False,
-            "learned_from_correction": True,
-            "correct_type": human_correction,
-            "keywords_added": extracted_keywords
-        }
-    
-    # Otherwise, normal completion
-    return {
-        "status": "completed", 
-        "approved": human_approved,
-        "classification": getattr(state, 'final_classification', None)
-    }
 
   def create_graph(self):
     # Build the graph
@@ -303,8 +330,7 @@ class DocumentClassifyAgent(Agent):
     graph.add_node("check_trust", self.check_trust_node)
     graph.add_node("human_confirmation", self.human_confirmation)
     graph.add_node("keyword_extraction", self.keyword_extraction_agent)
-    graph.add_node("keyword_extraction_tool_node", ToolNode([save_extracted_keywords]))
-    graph.add_node("handle_result", self.handle_result)
+    graph.add_node("delete_thread", self.delete_thread_node)
 
     # Add edges
     graph.add_edge(START, "classify_agent")
@@ -317,7 +343,7 @@ class DocumentClassifyAgent(Agent):
             "tool": "agent_tool_routing",
             "check_trust": "check_trust",
             "keyword_extraction": "keyword_extraction",
-            END: END
+            END: "delete_thread"
         }
     )
 
@@ -327,27 +353,24 @@ class DocumentClassifyAgent(Agent):
     # Trust check routing
     graph.add_conditional_edges(
         "check_trust",
-        self.route_from_trust_check,
+        lambda state: getattr(state, 'trust_routing', END),
         {
-            "auto_save": "handle_result",
+            "auto_save": "delete_thread",
             "human_confirm": "human_confirmation",
-            "classify": "classify_agent"
+            "classify": "classify_agent",
+            END: "delete_thread"
         }
     )
 
     # Human confirmation routes to keyword extraction (if correction) or result handler
     graph.add_conditional_edges(
         "human_confirmation",
-        lambda state: "keyword_extraction" if getattr(state, 'human_correction', None) else "handle_result",
+        lambda state: getattr(state, 'next_step', END),
         {
             "keyword_extraction": "keyword_extraction",
-            "handle_result": "handle_result"
+            END: "delete_thread"
         }
     )
 
-    # Keyword extraction goes to result handler
-    graph.add_edge("keyword_extraction", "keyword_extraction_tool_node")
-    graph.add_edge("keyword_extraction_tool_node", "handle_result")
-
-    # Result handler ends
-    graph.add_edge("handle_result", END)
+    graph.add_edge("keyword_extraction", "delete_thread")
+    graph.add_edge("delete_thread", END)

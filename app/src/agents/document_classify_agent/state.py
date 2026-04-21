@@ -10,3 +10,7 @@ class ClassificationAgentState(State):
   keywords: List[str] = Field(description="The keywords extracted from the document")
   keyword_ids: List[str] = Field(description="The IDs of the keywords extracted from the document")
   document_name: str = Field(description="The name of the document")
+  next_step: str = Field(description="The next step of the workflow")
+  trust_routing: str = Field(description="The trust routing of the workflow")
+  human_correction: str = Field(description="The human correction classification type")
+  human_approved: bool = Field(description="Whether the human has approved the classification")

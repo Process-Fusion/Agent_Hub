@@ -32,5 +32,3 @@ class AgentFactory:
   @abstractmethod
   def create_agent(self, agent_name: str) -> Agent:
     pass
-
-  
