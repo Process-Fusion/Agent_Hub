@@ -64,8 +64,8 @@ async def update_hit_count(type_name: str) -> None:
 async def update_miss_count(type_name: str) -> None:
   return await increment_miss_count(type_name)
 
-async def is_type_trusted(type_name: str) -> bool:
-  return await is_trusted(type_name)
+async def is_type_trusted(type_name: str, min_hits: int = 3) -> bool:
+  return await is_trusted(type_name, min_hits)
   
 async def get_trust_by_classification_type(type_name: str) -> float:
   return await get_trust_by_type(type_name)

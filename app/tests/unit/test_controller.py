@@ -47,12 +47,26 @@ def _req(method: str, path: str, **kwargs) -> httpx.Response:
 class TestClassifyEndpoint:
     _url = "/api/document-classify/classify"
 
-    # image_bytes is a `bytes` field; Pydantic v2 accepts base64 strings in JSON
     _payload = {
         "document_name": "invoice.pdf",
         "request": "classify this document",
-        "image_bytes": "ZmFrZWJ5dGVz",  # base64("fakebytes")
+        "image_bytes": ["ZmFrZWJ5dGVz"],  # base64("fakebytes")
     }
+
+    _agent_response = {
+        "classification_type": "Invoice",
+        "confidence_score": 0.95,
+        "reasoning": "Document contains invoice-related keywords.",
+        "matched_keyword_ids": [1, 2, 3],
+    }
+
+    @pytest.fixture(autouse=True)
+    def _mock_agent(self):
+        mock_agent = AsyncMock()
+        mock_agent.arun.return_value = self._agent_response
+        _app.state.agents = {"document_classify_agent": mock_agent}
+        yield mock_agent
+        del _app.state.agents
 
     def test_returns_200(self):
         assert _req("post", self._url, json=self._payload).status_code == 200
@@ -63,6 +77,7 @@ class TestClassifyEndpoint:
         assert "classification_type" in data
         assert "confidence_score" in data
         assert "reasoning" in data
+        assert "matched_keyword_ids" in data
 
     def test_document_name_echoed_in_response(self):
         data = _req("post", self._url, json=self._payload).json()
@@ -72,11 +87,31 @@ class TestClassifyEndpoint:
         data = _req("post", self._url, json=self._payload).json()
         assert isinstance(data["confidence_score"], float)
 
+    def test_matched_keyword_ids_is_list(self):
+        data = _req("post", self._url, json=self._payload).json()
+        assert isinstance(data["matched_keyword_ids"], list)
+
+    def test_returns_202_on_graph_interrupt(self):
+        from langgraph.errors import GraphInterrupt
+        mock_agent = AsyncMock()
+        mock_agent.arun.side_effect = GraphInterrupt({"question": "What type?"})
+        _app.state.agents = {"document_classify_agent": mock_agent}
+        resp = _req("post", self._url, json=self._payload)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "awaiting_human"
+
+    def test_returns_500_on_agent_error(self):
+        mock_agent = AsyncMock()
+        mock_agent.arun.side_effect = Exception("Agent failure")
+        _app.state.agents = {"document_classify_agent": mock_agent}
+        resp = _req("post", self._url, json=self._payload)
+        assert resp.status_code == 500
+
     def test_missing_document_name_returns_422(self):
         resp = _req(
             "post",
             self._url,
-            json={"request": "classify", "image_bytes": "ZmFrZQ=="},
+            json={"request": "classify", "image_bytes": ["ZmFrZQ=="]},
         )
         assert resp.status_code == 422
 
@@ -84,7 +119,7 @@ class TestClassifyEndpoint:
         resp = _req(
             "post",
             self._url,
-            json={"document_name": "file.pdf", "image_bytes": "ZmFrZQ=="},
+            json={"document_name": "file.pdf", "image_bytes": ["ZmFrZQ=="]},
         )
         assert resp.status_code == 422
 

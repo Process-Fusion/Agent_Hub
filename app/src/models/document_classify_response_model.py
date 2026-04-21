@@ -5,4 +5,4 @@ class DocumentClassifyResponse(BaseModel):
   classification_type: str
   confidence_score: float
   reasoning: str
-  matched_keyword_ids: list[int]
+  matched_keyword_ids: list[int] = []

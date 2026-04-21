@@ -8,6 +8,7 @@ from datetime import date
 from src.enums.keyword_type_enum import KeywordTypeEnum
 from src.services.postgres_db_service import (
    get_all_classification_keywords,
+   get_k_classification_keywords_by_type,
    get_all_classification_types,
    update_hit_count,
    update_miss_count,
@@ -25,13 +26,25 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 from langgraph.graph import END, START
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from src.infrastructure.postgres_db import get_connection
+from src.core.env_config import EnvConfig
 
 class DocumentClassifyAgent(Agent):
   def __init__(self):
     self.llm = ChatOpenAI(model="kimi-k2.5", base_url="https://api.moonshot.ai/v1", temperature=0.6, max_tokens=10000, timeout=None, max_retries=3, extra_body={"thinking": {"type": "disabled"}})
     self.graph = self.create_graph()
-    self.living_agent = self.graph.compile(checkpointer=AsyncPostgresSaver(conn = get_connection().__enter__()))
+    self.db_uri = EnvConfig().postgres_connection_string
+    self.living_agent = None
+
+  async def _ensure_compiled(self) -> None:
+    """`ainvoke` requires AsyncPostgresSaver (`aget_tuple`); compile graph on first async run."""
+    if self.living_agent is not None:
+      return
+    self._async_checkpointer_cm = AsyncPostgresSaver.from_conn_string(conn_string=self.db_uri)
+    self.checkpointer = await self._async_checkpointer_cm.__aenter__()
+    await self.checkpointer.setup()
+    self.living_agent = self.graph.compile(
+      checkpointer=self.checkpointer,
+    )
 
   @staticmethod
   def _format_keywords_for_prompt(keywords_by_type: dict) -> str:
@@ -68,13 +81,14 @@ class DocumentClassifyAgent(Agent):
 
     # Load template
     template = system_prompt_path.read_text(encoding="utf-8")
-
+    types = await get_all_classification_types()
     # Load and format classification keywords
-    keywords_by_type = await get_all_classification_keywords()
+    keywords_by_type = {}
+    for type_name in types:
+      keywords_by_type[type_name] = await get_k_classification_keywords_by_type(type_name, k=20)
     if keywords_by_type:
       classification_keywords = self._format_keywords_for_prompt(keywords_by_type)
     else:
-      types = await get_all_classification_types()
       classification_keywords = f"No keywords found. Known types: {', '.join(types)}"
 
     return template.format(
@@ -82,8 +96,9 @@ class DocumentClassifyAgent(Agent):
         current_date=date.today().isoformat()
     )
 
-  async def arun(self, document_name: str, page_images: list[bytes]) -> str:
+  async def arun(self, document_name: str, page_images) -> str:
     """Run the document classification agent."""
+    await self._ensure_compiled()
     thread_id = f"{document_name}"
     config = {"configurable": {"thread_id": thread_id}}
     
@@ -91,7 +106,7 @@ class DocumentClassifyAgent(Agent):
     for img in page_images:
       content.append({
         "type": "image_url",
-        "image_url": {"url": f"data:image/png;base64,{base64.b64encode(img).decode()}"}
+        "image_url": {"url": f"data:image/png;base64,{img if isinstance(img, str) else base64.b64encode(img).decode()}"}
       })
 
     result = await self.living_agent.ainvoke(
@@ -101,7 +116,6 @@ class DocumentClassifyAgent(Agent):
       },
       config=config
     )
-
     return {
        "classification_type": result["classification_type"],
        "confidence_score": result["confidence_score"],
@@ -112,10 +126,11 @@ class DocumentClassifyAgent(Agent):
     """Complaint from human (Human in the loop)
     Main target of complaint is to update the agent knowledge
     """
+    await self._ensure_compiled()
     thread_id = f"{document_name}"
     config = {"configurable": {"thread_id": thread_id}}
     # Update Trust System
-    update_miss_count(human_response.agent_classification_type)
+    await update_miss_count(human_response.agent_classification_type)
     # Update the agent knowledge
     await self.living_agent.ainvoke(
       Command(
@@ -134,6 +149,7 @@ class DocumentClassifyAgent(Agent):
     Resume from interruption (Human in the loop)
     Main target of resume is to update the agent knowledge
     """
+    await self._ensure_compiled()
     thread_id = f"{document_name}"
     config = {"configurable": {"thread_id": thread_id}}
     decision = "approve" if human_response.decision else "correct"
@@ -191,7 +207,7 @@ class DocumentClassifyAgent(Agent):
     document_name = getattr(state, 'document_name', 'Unknown')
     
     # Get current trust info
-    trust_info = get_trust_by_classification_type(classification_type)
+    trust_info = await get_trust_by_classification_type(classification_type)
     hit_count = trust_info['hitcount'] if trust_info else 0
     miss_count = trust_info['misscount'] if trust_info else 0
     
@@ -205,7 +221,7 @@ class DocumentClassifyAgent(Agent):
             "hit_count": hit_count,
             "miss_count": miss_count,
             "net_score": hit_count - miss_count,
-            "is_trusted": is_type_trusted(classification_type, min_hits=3)
+            "is_trusted": await is_type_trusted(classification_type, min_hits=3)
         },
         "question": f"Approve classification '{classification_type}' with confidence {confidence_score:.2f}?",
         "options": {
@@ -220,9 +236,9 @@ class DocumentClassifyAgent(Agent):
         
         if decision == "approve":
             # Human confirmed - increment hit count
-            update_hit_count(classification_type)
+            await update_hit_count(classification_type)
             # Human confimed - increment keywords hit count
-            update_classification_keywords_hit(state.keyword_ids)
+            await update_classification_keywords_hit(state.keyword_ids)
             return {
                 "human_approved": True,
                 "human_correction": None,
@@ -231,9 +247,9 @@ class DocumentClassifyAgent(Agent):
         
         elif decision == "correct":
             # Human rejected - increment miss count and get correction
-            update_miss_count(classification_type)
+            await update_miss_count(classification_type)
             # Human rejected - increment keywords miss count
-            update_classification_keywords_miss(state.keyword_ids)
+            await update_classification_keywords_miss(state.keyword_ids)
             correct_type = human_response.get("correct_classification", classification_type)
             
             return {
@@ -243,8 +259,8 @@ class DocumentClassifyAgent(Agent):
             }
     
     # Default: treat as rejection
-    update_miss_count(classification_type)
-    update_classification_keywords_miss(state.keyword_ids)
+    await update_miss_count(classification_type)
+    await update_classification_keywords_miss(state.keyword_ids)
     return {
         "human_approved": False,
         "human_correction": None,
@@ -305,22 +321,23 @@ class DocumentClassifyAgent(Agent):
         return {"trust_routing": "classify"}
     
     # Check trust status
-    trusted = is_type_trusted(classification_type, min_hits=3)
+    trusted = await is_type_trusted(classification_type, min_hits=3)
     
     if trusted and confidence_score >= 0.85:
         # Auto-classify - no human needed
-        update_hit_count(classification_type)
-        update_classification_keywords_hit(state.keyword_ids)
+        await update_hit_count(classification_type)
+        await update_classification_keywords_hit(state.keyword_ids)
         return {"trust_routing": "auto_save"}
     else:
         # Not trusted or low confidence - need human confirmation
         return {"trust_routing": "human_confirm"}
   
   async def delete_thread_node(self, state: ClassificationAgentState) -> None:
+    await self._ensure_compiled()
     await self.living_agent.checkpointer.adelete_thread(state.document_name)
 
 
-  def create_graph(self):
+  def create_graph(self) -> StateGraph:
     # Build the graph
     graph = StateGraph(ClassificationAgentState)
 
@@ -374,3 +391,5 @@ class DocumentClassifyAgent(Agent):
 
     graph.add_edge("keyword_extraction", "delete_thread")
     graph.add_edge("delete_thread", END)
+
+    return graph

@@ -13,11 +13,11 @@ class TestDocumentClassifyRequest:
         req = DocumentClassifyRequest(
             document_name="invoice.pdf",
             request="classify this document",
-            image_bytes=b"fakebytes",
+            image_bytes=["fakebytes"],
         )
         assert req.document_name == "invoice.pdf"
         assert req.request == "classify this document"
-        assert req.image_bytes == b"fakebytes"
+        assert req.image_bytes == ["fakebytes"]
 
     def test_missing_document_name_raises(self):
         with pytest.raises(ValidationError):
@@ -33,9 +33,9 @@ class TestDocumentClassifyRequest:
 
     def test_empty_bytes_accepted(self):
         req = DocumentClassifyRequest(
-            document_name="empty.pdf", request="classify", image_bytes=b""
+            document_name="empty.pdf", request="classify", image_bytes=[b""]
         )
-        assert req.image_bytes == b""
+        assert req.image_bytes == [""]
 
     def test_all_fields_required(self):
         with pytest.raises(ValidationError):

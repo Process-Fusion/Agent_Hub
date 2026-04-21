@@ -170,13 +170,13 @@ Your analysis:
 Save via `save_extracted_keywords`:
 ```json
 [
-  { "text": "Purchase Order",       "keyword_type": "PRIMARY",     "source": "HUMAN_CORRECTED" },
-  { "text": "PO Number",            "keyword_type": "PRIMARY",     "source": "HUMAN_CORRECTED" },
-  { "text": "Vendor Quote",         "keyword_type": "CONTEXTUAL",  "source": "HUMAN_CORRECTED" },
-  { "text": "delivery date",        "keyword_type": "CONTEXTUAL",  "source": "HUMAN_CORRECTED" },
-  { "text": "authorized signature", "keyword_type": "CONTEXTUAL",  "source": "HUMAN_CORRECTED" },
-  { "text": "no invoice number",    "keyword_type": "ABSENCE",     "source": "HUMAN_CORRECTED" },
-  { "text": "no pricing table",     "keyword_type": "ABSENCE",     "source": "HUMAN_CORRECTED" }
+  {{ "text": "Purchase Order",       "keyword_type": "PRIMARY",     "source": "HUMAN_CORRECTED" }},
+  {{ "text": "PO Number",            "keyword_type": "PRIMARY",     "source": "HUMAN_CORRECTED" }},
+  {{ "text": "Vendor Quote",         "keyword_type": "CONTEXTUAL",  "source": "HUMAN_CORRECTED" }},
+  {{ "text": "delivery date",        "keyword_type": "CONTEXTUAL",  "source": "HUMAN_CORRECTED" }},
+  {{ "text": "authorized signature", "keyword_type": "CONTEXTUAL",  "source": "HUMAN_CORRECTED" }},
+  {{ "text": "no invoice number",    "keyword_type": "ABSENCE",     "source": "HUMAN_CORRECTED" }},
+  {{ "text": "no pricing table",     "keyword_type": "ABSENCE",     "source": "HUMAN_CORRECTED" }}
 ]
 ```
 
@@ -194,6 +194,7 @@ Save via `save_extracted_keywords`:
   - Keywords found
   - Contextual patterns that validated them
   - Any missing expected patterns
+- `matched_keyword_ids`: IDs of keywords that matched the document` **MUST HAVE**
 
 ### 2. `save_extracted_keywords`
 **Purpose:** Save semantic patterns discovered during learning

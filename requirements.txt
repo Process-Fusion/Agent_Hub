@@ -2,6 +2,7 @@
 langchain-core>=0.2.0
 langchain-openai>=0.1.0
 langgraph>=0.1.0
+langgraph-checkpoint-postgres>=2.0.0
 langsmith>=0.1.0
 
 # Environment variables
@@ -28,3 +29,4 @@ pytest
 httpx>=0.20.0        # ASGITransport for controller tests
 
 psycopg2-binary
+psycopg[binary]>=3.1.0
