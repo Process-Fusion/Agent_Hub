@@ -7,7 +7,7 @@ services:
       - "8000:8000"
     env_file: .env
     # volumes:
-    #   - .:/main
+    #   - ./app:/app
     # working_dir: /main
     depends_on:
       db:

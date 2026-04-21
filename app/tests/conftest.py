@@ -13,7 +13,7 @@ import sys
 # ---------------------------------------------------------------------------
 os.environ.setdefault(
     "POSTGRES_CONNECTION_STRING",
-    "postgresql+psycopg2://test:test@localhost/testdb",
+    "postgresql://test:test@localhost/testdb",
 )
 
 # ---------------------------------------------------------------------------

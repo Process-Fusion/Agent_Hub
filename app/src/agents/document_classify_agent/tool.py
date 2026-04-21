@@ -33,7 +33,7 @@ from src.models.classification_keyword_model import ClassificationKeywordModel
 #         update={
 #             "messages": [ToolMessage(content=f"Classification reasoning saved to {filename}", tool_call_id=tool_call_id)],
 #             "classification_type": classification_type,
-#             "confidence_score": confidence_score,
+#             "confidence_score": confidence_score / 100.0,
 #             "document_name": document_name,
 #             "reasoning": reasoning
 #         }
@@ -85,19 +85,25 @@ async def classify_document(
     
     Args:
         classification_type: The classification type to classify the document into.
-        confidence_score: The confidence score of the classification (0-100).
+        confidence_score: The confidence score of the classification (0-1.0).
         matched_keyword_ids: The IDs of the keywords that matched the document.
         reasoning: The detailed reasoning for the classification.
     """
     # Check for classification type is valid
     # print(f"Classification Types: {await get_all_classification_types()}")
-    # valid_types = await get_all_classification_types()
-    # if classification_type not in valid_types:
-    #     return Command(
-    #         update={
-    #             "messages": [ToolMessage(content=f"Error: '{classification_type}' is not a valid classification type. Valid types: {valid_types}", tool_call_id=tool_call_id)],
-    #         }
-    #     )
+    valid_types = await get_all_classification_types()
+    if confidence_score > 1.0:
+        return Command(
+            update={
+                "messages": [ToolMessage(content=f"Error: Confidence score must be between 0 and 1.0", tool_call_id=tool_call_id)],
+            }
+        )
+    if classification_type not in valid_types:
+        return Command(
+            update={
+                "messages": [ToolMessage(content=f"Error: '{classification_type}' is not a valid classification type. Valid types: {valid_types}", tool_call_id=tool_call_id)],
+            }
+        )
     
     return Command(
         update={
@@ -149,16 +155,16 @@ async def save_extracted_keywords(
     
     try:
         # Insert keywords into database
-        inserted_ids = await insert_keywords(classification_type, keywords)
+        await insert_keywords(classification_type, keywords)
         
         return Command(
             update={
                 "messages": [ToolMessage(
-                    content=f"AI extracted {len(inserted_ids)} keywords for '{classification_type}': {', '.join(keywords)}",
+                    content=f"AI extracted {len(keywords)} keywords for '{classification_type}': {', '.join(keywords)}",
                     tool_call_id=tool_call_id
                 )],
                 "extracted_keywords": keywords,
-                "keyword_ids": inserted_ids
+                "keyword_ids": []
             }
         )
     except Exception as e:

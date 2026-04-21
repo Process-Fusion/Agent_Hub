@@ -15,14 +15,20 @@ controller will raise KeyError -> 500 until that is fixed.
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 import httpx
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import pytest
 from fastapi import FastAPI
 
 from src.utils.pdf_utils import pdf_to_base64_images
+from dotenv import load_dotenv
 
+load_dotenv()
 # ---------------------------------------------------------------------------
 # Skip the entire module when integration env vars are absent
 # ---------------------------------------------------------------------------

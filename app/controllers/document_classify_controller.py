@@ -30,7 +30,7 @@ async def document_classify(request: Request, body: DocumentClassifyRequest) -> 
         classification_type= agent_response["classification_type"],
         confidence_score=agent_response["confidence_score"],
         reasoning=agent_response["reasoning"],
-        matched_keyword_ids=agent_response["matched_keyword_ids"] # Incase complaints
+        matched_keyword_ids=agent_response.get("matched_keyword_ids", [])
       ).model_dump()
     )
   except GraphInterrupt as gi:

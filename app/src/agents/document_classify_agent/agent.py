@@ -1,4 +1,5 @@
 from langgraph.types import Command
+from langgraph.errors import GraphInterrupt
 from src.agents.agent_factory import Agent
 from src.agents.document_classify_agent.state import ClassificationAgentState
 from src.models.document_human_response_model import DocumentHumanResponseModel
@@ -96,7 +97,7 @@ class DocumentClassifyAgent(Agent):
         current_date=date.today().isoformat()
     )
 
-  async def arun(self, document_name: str, page_images) -> str:
+  async def arun(self, document_name: str, page_images) -> dict[str, str]:
     """Run the document classification agent."""
     await self._ensure_compiled()
     thread_id = f"{document_name}"
@@ -116,10 +117,17 @@ class DocumentClassifyAgent(Agent):
       },
       config=config
     )
+
+    
+    snapshot = await self.living_agent.aget_state(config)
+    pending = [i.value for t in snapshot.tasks for i in t.interrupts]
+    if pending:
+      raise GraphInterrupt(*pending)
+
     return {
-       "classification_type": result["classification_type"],
-       "confidence_score": result["confidence_score"],
-       "reasoning": result["reasoning"]
+       "classification_type": result.get("classification_type", ""),
+       "confidence_score": result.get("confidence_score", 0.0),
+       "reasoning": result.get("reasoning", ""),
     }
   
   async def acomplaint(self, document_name: str, human_response: DocumentHumanResponseModel) -> None:
@@ -152,12 +160,12 @@ class DocumentClassifyAgent(Agent):
     await self._ensure_compiled()
     thread_id = f"{document_name}"
     config = {"configurable": {"thread_id": thread_id}}
-    decision = "approve" if human_response.decision else "correct"
+    decision = "approve" if human_response.human_approved else "correct"
     await self.living_agent.ainvoke(
       Command(resume={
          "decision": decision,
          "document_name": document_name,
-         "correct_classification": human_response.final_classification_type
+         "correct_classification": human_response.human_correction
       }),
       config=config
     )
@@ -189,7 +197,7 @@ class DocumentClassifyAgent(Agent):
     if hasattr(state, 'classification_type') and state.classification_type:
         return "check_trust"
     
-    return END
+    return "delete_thread"
 
   async def agent_tool_routing(self, state: ClassificationAgentState) -> Command:
     """Handle tool execution and routing."""
@@ -242,7 +250,7 @@ class DocumentClassifyAgent(Agent):
             return {
                 "human_approved": True,
                 "human_correction": None,
-                "next_step": None
+                "next_step": "delete_thread"
             }
         
         elif decision == "correct":
@@ -264,7 +272,7 @@ class DocumentClassifyAgent(Agent):
     return {
         "human_approved": False,
         "human_correction": None,
-        "next_step": None
+        "next_step": "delete_thread"
     }
 
   async def keyword_extraction_agent(self,state: ClassificationAgentState) -> ClassificationAgentState:
@@ -360,7 +368,7 @@ class DocumentClassifyAgent(Agent):
             "tool": "agent_tool_routing",
             "check_trust": "check_trust",
             "keyword_extraction": "keyword_extraction",
-            END: "delete_thread"
+            "delete_thread": "delete_thread"
         }
     )
 
@@ -370,22 +378,22 @@ class DocumentClassifyAgent(Agent):
     # Trust check routing
     graph.add_conditional_edges(
         "check_trust",
-        lambda state: getattr(state, 'trust_routing', END),
+        lambda state: getattr(state, 'trust_routing', 'delete_thread'),
         {
             "auto_save": "delete_thread",
             "human_confirm": "human_confirmation",
             "classify": "classify_agent",
-            END: "delete_thread"
+            "delete_thread": "delete_thread"
         }
     )
 
     # Human confirmation routes to keyword extraction (if correction) or result handler
     graph.add_conditional_edges(
         "human_confirmation",
-        lambda state: getattr(state, 'next_step', END),
+        lambda state: getattr(state, 'next_step', 'delete_thread'),
         {
             "keyword_extraction": "keyword_extraction",
-            END: "delete_thread"
+            "delete_thread": "delete_thread"
         }
     )
 

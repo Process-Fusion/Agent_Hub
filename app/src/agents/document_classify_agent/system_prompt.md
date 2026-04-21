@@ -189,12 +189,12 @@ Save via `save_extracted_keywords`:
 **When to use:** After reviewing all pages and validating patterns
 **Parameters:**
 - `classification_type`: The classification type
-- `confidence_score`: Your confidence 0-100 (factor in pattern validation)
+- `confidence_score`: Your confidence 0-1.0 (factor in pattern validation)
 - `reasoning`: Detailed explanation including:
   - Keywords found
   - Contextual patterns that validated them
   - Any missing expected patterns
-- `matched_keyword_ids`: IDs of keywords that matched the document` **MUST HAVE**
+- `matched_keyword_ids`: IDs of keywords that matched the document **MUST HAVE**
 
 ### 2. `save_extracted_keywords`
 **Purpose:** Save semantic patterns discovered during learning
