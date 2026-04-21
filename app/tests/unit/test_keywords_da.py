@@ -31,18 +31,18 @@ _CP = "src.DAL.classification_keywords_DA.call_procedure"
 
 
 def _kw(**overrides) -> ClassificationKeywordModel:
-    """Build a minimal ClassificationKeywordModel (uses aliases)."""
-    defaults = {"ClassificationKeywords": "invoice", "KeywordType": "PRIMARY", "Source": "SEED"}
+    """Build a minimal ClassificationKeywordModel using field names (populate_by_name=True)."""
+    defaults = {"ClassificationKeyword": "invoice", "KeywordType": "PRIMARY", "Source": "SEED"}
     return ClassificationKeywordModel(**{**defaults, **overrides})
 
 
 def _row(**overrides) -> dict:
-    """Build a minimal keyword DB row matching DB column / model alias names."""
+    """Build a minimal keyword DB row matching asyncpg lowercase column names / model aliases."""
     base = {
-        "KeywordID": 1, "TypeID": 1, "ClassificationKeywords": "invoice",
-        "Stage": 1, "IsActive": True, "KeywordType": "PRIMARY", "Source": "SEED",
-        "KeywordHitCount": 0, "KeywordMissCount": 0,
-        "LastSeenDate": None, "CreatedDate": None, "ModifiedDate": None,
+        "keywordid": 1, "typeid": 1, "classificationkeywords": "invoice",
+        "isactive": True, "keywordtype": "PRIMARY", "source": "SEED",
+        "keywordhitcount": 0, "keywordmisscount": 0,
+        "lastseendate": None, "createddate": None, "modifieddate": None,
     }
     return {**base, **overrides}
 
@@ -107,9 +107,9 @@ class TestEnsureTypeExists:
 class TestGetAllKeywords:
     def test_groups_keywords_by_type(self):
         rows = [
-            {"typename": "Invoice", **_row(ClassificationKeywords="invoice")},
-            {"typename": "Invoice", **_row(ClassificationKeywords="payment due")},
-            {"typename": "Purchase Order", **_row(ClassificationKeywords="PO number")},
+            {"typename": "Invoice", **_row(classificationkeywords="invoice")},
+            {"typename": "Invoice", **_row(classificationkeywords="payment due")},
+            {"typename": "Purchase Order", **_row(classificationkeywords="PO number")},
         ]
         async def run():
             with patch(_CFR, new_callable=AsyncMock, return_value=rows):
@@ -134,9 +134,9 @@ class TestGetAllKeywords:
 
     def test_preserves_insertion_order_within_type(self):
         rows = [
-            {"typename": "Invoice", **_row(ClassificationKeywords="first")},
-            {"typename": "Invoice", **_row(ClassificationKeywords="second")},
-            {"typename": "Invoice", **_row(ClassificationKeywords="third")},
+            {"typename": "Invoice", **_row(classificationkeywords="first")},
+            {"typename": "Invoice", **_row(classificationkeywords="second")},
+            {"typename": "Invoice", **_row(classificationkeywords="third")},
         ]
         async def run():
             with patch(_CFR, new_callable=AsyncMock, return_value=rows):
@@ -150,7 +150,7 @@ class TestGetAllKeywords:
 # ---------------------------------------------------------------------------
 class TestGetKeywordsByType:
     def test_returns_list_of_models(self):
-        rows = [_row(ClassificationKeywords="invoice"), _row(ClassificationKeywords="balance due")]
+        rows = [_row(classificationkeywords="invoice"), _row(classificationkeywords="balance due")]
         async def run():
             with patch(_CFR, new_callable=AsyncMock, return_value=rows):
                 return await get_keywords_by_type("Invoice")
@@ -178,7 +178,7 @@ class TestGetKeywordsByType:
 # ---------------------------------------------------------------------------
 class TestGetKKeywordsByType:
     def test_returns_list_of_models(self):
-        rows = [_row(ClassificationKeywords=f"kw{i}") for i in range(3)]
+        rows = [_row(classificationkeywords=f"kw{i}") for i in range(3)]
         async def run():
             with patch(_CFR, new_callable=AsyncMock, return_value=rows):
                 return await get_k_keywords_by_type("Invoice", k=3)
@@ -206,7 +206,7 @@ class TestGetKKeywordsByType:
 # ---------------------------------------------------------------------------
 class TestInsertKeywords:
     def test_calls_procedure_for_each_keyword(self):
-        keywords = [_kw(ClassificationKeywords="kw1"), _kw(ClassificationKeywords="kw2")]
+        keywords = [_kw(ClassificationKeyword="kw1"), _kw(ClassificationKeyword="kw2")]
         async def run():
             with patch(_SQ, new_callable=AsyncMock, return_value=[{"typeid": 1}]):
                 with patch(_CP, new_callable=AsyncMock) as mock_cp:
