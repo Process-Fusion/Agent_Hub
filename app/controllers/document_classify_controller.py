@@ -23,7 +23,7 @@ async def document_classify(request: Request, body: DocumentClassifyRequest) -> 
   """
   try:
     agent = request.app.state.agents["document_classify_agent"]
-    images = base64_pdf_to_base64_images(body.File.File_content)
+    images = base64_pdf_to_base64_images(body.File.File_content[0])
     agent_response = await agent.arun(body.document_name, images)
     return JSONResponse(
       status_code=200,
