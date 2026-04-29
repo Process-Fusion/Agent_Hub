@@ -42,6 +42,20 @@ def pdf_to_base64_images(
     return results
 
 
+def base64_pdf_to_base64_images(
+    base64_pdf: str,
+    dpi: int = 150,
+    image_format: str = "PNG",
+) -> list[str]:
+    """Convert a base64-encoded PDF string to a list of base64 image strings.
+
+    Decodes the PDF from base64, renders each page, and returns one base64
+    image string per page.
+    """
+    pdf_bytes = base64.b64decode(base64_pdf)
+    return pdf_to_base64_images(pdf_bytes, dpi=dpi, image_format=image_format)
+
+
 def pdf_to_base64_data_uris(
     pdf_source: Union[str, Path, bytes],
     dpi: int = 150,
