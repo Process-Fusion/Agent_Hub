@@ -10,6 +10,7 @@ from src.models.add_classification_type_request_model import AddClassificationTy
 from src.models.document_human_response_model import DocumentHumanResponseModel
 from typing import List
 from langgraph.errors import GraphInterrupt
+from src.utils.pdf_utils import base64_pdf_to_base64_images
 
 from src.services.postgres_db_service import get_all_classification_types, get_classification_keywords_by_type, add_classification_type, deactivate_stale_classification_keywords
 
@@ -22,7 +23,8 @@ async def document_classify(request: Request, body: DocumentClassifyRequest) -> 
   """
   try:
     agent = request.app.state.agents["document_classify_agent"]
-    agent_response = await agent.arun(body.document_name, body.image_bytes)
+    images = base64_pdf_to_base64_images(body.File.File_content)
+    agent_response = await agent.arun(body.document_name, images)
     return JSONResponse(
       status_code=200,
       content= DocumentClassifyResponse(
