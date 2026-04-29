@@ -50,7 +50,10 @@ class TestClassifyEndpoint:
     _payload = {
         "document_name": "invoice.pdf",
         "request": "classify this document",
-        "image_bytes": ["ZmFrZWJ5dGVz"],  # base64("fakebytes")
+        "File": {
+            "File_content": ["ZmFrZWJ5dGVz"],
+            "File_name": "invoice.pdf",
+        },
     }
 
     _agent_response = {
@@ -65,7 +68,11 @@ class TestClassifyEndpoint:
         mock_agent = AsyncMock()
         mock_agent.arun.return_value = self._agent_response
         _app.state.agents = {"document_classify_agent": mock_agent}
-        yield mock_agent
+        with patch(
+            "controllers.document_classify_controller.base64_pdf_to_base64_images",
+            return_value=["ZmFrZWJ5dGVz"],
+        ):
+            yield mock_agent
         del _app.state.agents
 
     def test_returns_200(self):
