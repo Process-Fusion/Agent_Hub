@@ -46,14 +46,14 @@ async def document_classify(request: Request, body: DocumentClassifyRequest) -> 
     raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/humanresponse")
-async def document_human_response(request: Request, human_responses: List[DocumentHumanResponseModel]) -> JSONResponse:
+async def document_human_response(request: Request, body: List[DocumentHumanResponseModel]) -> JSONResponse:
   """
   Resume the conversation to finish agent workflow that executed during /classify api call.
   The conversation session is stored in postgres db, and is stored with the same name as document name.
   """
   try:
     agent = request.app.state.agents["document_classify_agent"]
-    for human_response in human_responses:
+    for human_response in body:
       await agent.aresume(human_response.document_name, human_response)
     return JSONResponse(status_code=200, content={"status": "success"})
   except Exception as e:
@@ -61,14 +61,14 @@ async def document_human_response(request: Request, human_responses: List[Docume
     raise HTTPException(status_code=500, detail=str(e))
   
 @router.post("/humancomplaint")
-async def document_human_complaint(request: Request, human_complaints: List[DocumentHumanResponseModel]) -> None:
+async def document_human_complaint(request: Request, body: List[DocumentHumanResponseModel]) -> None:
   """
   This is the case that when the agent is trusted and confident with the classification, but the end user (SSG team)
   decided that the classification is wrong.
   """
   try:
     agent = request.app.state.agents["document_classify_agent"]
-    for human_complaint in human_complaints:
+    for human_complaint in body:
       pass
       #await resume_conversation(human_complaint.document_name, human_complaint)
   except Exception as e:

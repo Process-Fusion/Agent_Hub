@@ -52,7 +52,8 @@ def base64_pdf_to_base64_images(
     Decodes the PDF from base64, renders each page, and returns one base64
     image string per page.
     """
-    pdf_bytes = base64.b64decode(base64_pdf)
+    padded = base64_pdf + "=" * (-len(base64_pdf) % 4)
+    pdf_bytes = base64.b64decode(padded)
     return pdf_to_base64_images(pdf_bytes, dpi=dpi, image_format=image_format)
 
 
